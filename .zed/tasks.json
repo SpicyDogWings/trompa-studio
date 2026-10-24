@@ -1,0 +1,68 @@
+// Tareas de Zed equivalentes a los scripts de devbox.json.
+// Se lanzan con `task: spawn` y se repiten con `task: rerun`.
+[
+  {
+    // App de escritorio: Nuxt dev + ventana de Tauri.
+    "label": "devbox: dev (escritorio)",
+    "command": "devbox run dev",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "save": "all"
+  },
+  {
+    // Solo el frontend en el navegador (localhost:3000).
+    "label": "devbox: dev (web)",
+    "command": "devbox run dev:web",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "save": "all"
+  },
+  {
+    // Genera .output/public y empaqueta la app.
+    "label": "devbox: build",
+    "command": "devbox run build",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "on_success",
+    "save": "all"
+  },
+  {
+    // cargo check del backend Rust.
+    "label": "devbox: check",
+    "command": "devbox run check",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "no_focus",
+    "hide": "on_success",
+    "save": "all"
+  },
+  {
+    // pnpm install.
+    "label": "devbox: setup",
+    "command": "devbox run setup",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "no_focus",
+    "hide": "on_success"
+  },
+  {
+    // Descarga/actualiza el entorno Nix (primera vez o tras editar devbox.json).
+    "label": "devbox: install",
+    "command": "devbox install",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "no_focus",
+    "hide": "on_success"
+  },
+  {
+    // Shell interactivo con todas las herramientas del proyecto.
+    "label": "devbox: shell",
+    "command": "devbox shell",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  }
+]

@@ -1,0 +1,54 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA de la config MCP de este proyecto. NO edites este archivo con tus
+// secretos: está versionado en git. El que Zed lee es .zed/settings.json.
+//
+// 1) Cópiala al archivo real:
+//        cp .zed/settings.example.json .zed/settings.json
+//
+// 2) GitHub — crea el token en:
+//        Settings → Developer settings → Personal access tokens
+//        → Fine-grained tokens → Generate new token
+//          Repository access:  Only select repositories → <este repo>
+//          Permissions:        Contents: Read
+//                              Metadata: Read
+//                              (+ Issues / Pull requests si los quieres)
+//
+//    En .zed/settings.json sustituye el placeholder por el token real:
+//        ANTES:    "Authorization": "Bearer <TU_TOKEN_AQUI>"
+//        DESPUÉS:  "Authorization": "Bearer github_pat_11ABC..."
+//    Reemplaza el placeholder entero (< y > incluidos). El token va en una
+//    sola línea, sin comillas internas y sin espacios.
+//
+// 3) Playwright — no necesita token. Por defecto usa Google Chrome del
+//    sistema (canal "chrome"). Si no tienes Chrome, descarga el Chromium
+//    que trae Playwright:
+//        npx playwright install chromium
+//    y descomenta `--executable-path` apuntando al binario descargado.
+//    Las snapshots que genera se guardan en .playwright-mcp/ (ignorado).
+//
+// Si abres este archivo en Zed no pasa nada: Zed solo lee .zed/settings.json,
+// que está en .gitignore.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  "context_servers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer <TU_TOKEN_AQUI>"
+        // Solo lectura (descomenta si no quieres que el agente escriba):
+        // ,"X-MCP-Readonly": "true"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+        // Chrome no instalado? Usa el Chromium de Playwright:
+        // ,"--executable-path", "/home/tu-usuario/.cache/ms-playwright/chromium-XXXX/chrome-linux64/chrome"
+        // Ventana visible por defecto; añade "--headless" si no la quieres:
+        // ,"--headless"
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+
+# Node dependencies
+node_modules
+
+# Logs
+logs
+*.log
+
+# Devbox / Nix
+.devbox
+.direnv
+
+# Misc
+.DS_Store
+.playwright-mcp
+
+# Zed (config local con tokens; la plantilla settings.example.json sí se versiona)
+.zed/settings.json
+.fleet
+.idea
+
+# Local env files
+.env
+.env.*
+!.env.example

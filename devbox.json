@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.18.4/.schema/devbox.schema.json",
+  "packages": [
+    "nodejs@26.12.0",
+    "pnpm@12.9.0",
+    "cargo@1.99.0",
+    "rustc@1.99.0",
+    "pkg-config@latest",
+    "openssl@3",
+    "patchelf@latest",
+    "file@latest",
+    "curl@latest",
+    "wget@latest",
+    "gtk3@latest",
+    "webkitgtk_4_1@latest",
+    "libsoup_3@latest",
+    "librsvg@latest",
+    "gdk-pixbuf@latest",
+    "glib@latest",
+    "cairo@latest",
+    "pango@latest",
+    "harfbuzz@latest",
+    "at-spi2-atk@latest",
+    "at-spi2-core@latest",
+    "gobject-introspection@latest",
+    "libayatana-appindicator@latest",
+    "xdotool@latest",
+    "nixpkgs#gtk3.dev",
+    "nixpkgs#webkitgtk_4_1.dev",
+    "nixpkgs#libsoup_3.dev",
+    "nixpkgs#gdk-pixbuf.dev",
+    "nixpkgs#glib.dev",
+    "nixpkgs#cairo.dev",
+    "nixpkgs#pango.dev",
+    "nixpkgs#harfbuzz.dev",
+    "nixpkgs#at-spi2-core.dev",
+    "nixpkgs#libayatana-appindicator.dev"
+  ],
+  "env": {
+    "RUST_BACKTRACE": "1"
+  },
+  "shell": {
+    "init_hook": [
+      "export PKG_CONFIG_PATH=\"$DEVBOX_PACKAGES_DIR/lib/pkgconfig:$DEVBOX_PACKAGES_DIR/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}\"",
+      "echo \"Nuxtri ▸ node $(node -v) · pnpm $(pnpm -v) · $(rustc -V)\""
+    ],
+    "scripts": {
+      "setup": [
+        "pnpm install"
+      ],
+      "dev": [
+        "pnpm tauri dev"
+      ],
+      "dev:web": [
+        "pnpm dev"
+      ],
+      "build": [
+        "pnpm tauri build"
+      ],
+      "check": [
+        "cargo check --manifest-path src-tauri/Cargo.toml"
+      ]
+    }
+  }
+}
