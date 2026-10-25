@@ -32,3 +32,6 @@ tokio-postgres = "0.7.18"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-postgres-rustls = { version = "0.14", features = ["ring"] }
 webpki-roots = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
