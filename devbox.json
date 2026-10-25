@@ -34,7 +34,9 @@
     "nixpkgs#pango.dev",
     "nixpkgs#harfbuzz.dev",
     "nixpkgs#at-spi2-core.dev",
-    "nixpkgs#libayatana-appindicator.dev"
+    "nixpkgs#libayatana-appindicator.dev",
+    "postgresql@latest",
+    "mesa@latest"
   ],
   "env": {
     "RUST_BACKTRACE": "1"
@@ -51,6 +53,9 @@
       "dev": [
         "pnpm tauri dev"
       ],
+      "dev:linux": [
+        "export __EGL_VENDOR_LIBRARY_FILENAMES=\"$DEVBOX_PACKAGES_DIR/share/glvnd/egl_vendor.d/50_mesa.json\" && export LIBGL_ALWAYS_SOFTWARE=1 && pnpm tauri dev"
+      ],
       "dev:web": [
         "pnpm dev"
       ],
@@ -59,6 +64,30 @@
       ],
       "check": [
         "cargo check --manifest-path src-tauri/Cargo.toml"
+      ],
+      "db:start": [
+        "mkdir -p .data /tmp/trompa-pg",
+        "test -s .data/postgres/PG_VERSION || initdb -D .data/postgres -U postgres --auth-local=trust --auth-host=trust --encoding=UTF8 --locale=C",
+        "pg_ctl status -D .data/postgres > /dev/null 2>&1 || pg_ctl -D .data/postgres -l .data/postgres.log -o \"-p 5432 -k /tmp/trompa-pg\" -w start"
+      ],
+      "db:stop": [
+        "pg_ctl -D .data/postgres -m fast stop"
+      ],
+      "db:status": [
+        "pg_isready -h 127.0.0.1 -p 5432 && psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c \"select version()\""
+      ],
+      "db:psql": [
+        "psql -h 127.0.0.1 -p 5432 -U postgres -d postgres"
+      ],
+      "db:seed": [
+        "psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = 'trompa'\" | grep -q 1 || createdb -h 127.0.0.1 -p 5432 -U postgres trompa",
+        "psql -h 127.0.0.1 -p 5432 -U postgres -d trompa -c \"CREATE TABLE IF NOT EXISTS clientes (id bigserial PRIMARY KEY, nombre text NOT NULL, email text UNIQUE, alta timestamptz NOT NULL DEFAULT now())\"",
+        "psql -h 127.0.0.1 -p 5432 -U postgres -d trompa -c \"INSERT INTO clientes (nombre, email) VALUES ('Ada Lovelace', 'ada@example.com'), ('Alan Turing', 'alan@example.com'), ('Grace Hopper', 'grace@example.com') ON CONFLICT (email) DO NOTHING\"",
+        "psql -h 127.0.0.1 -p 5432 -U postgres -d trompa -c \"SELECT id, nombre, email FROM clientes ORDER BY id\""
+      ],
+      "db:reset": [
+        "pg_ctl -D .data/postgres -m immediate stop || true",
+        "rm -rf .data/postgres .data/postgres.log"
       ]
     }
   }
