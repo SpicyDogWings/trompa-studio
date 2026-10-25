@@ -10,6 +10,7 @@ pub fn run() {
             db::disconnect,
             db::run_query,
             db::list_schema,
+            db::fetch_table_page,
             preferences::read_preferences,
             preferences::write_preferences,
             db::start_query,
