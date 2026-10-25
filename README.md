@@ -83,6 +83,20 @@ En **Zed**, los mismos comandos están disponibles como tareas en `.zed/tasks.js
 
 > `devbox.lock` sí se versiona; `.devbox/` y `.direnv/` están ignorados.
 
+### Pruebas
+
+```bash
+# Backend: los tests de integración necesitan el PostgreSQL de devbox.
+devbox run db:start
+TROMPA_TEST_DATABASE_URL='postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable' \
+  cargo test --lib --manifest-path src-tauri/Cargo.toml
+
+# Frontend
+pnpm vitest run
+```
+
+`TROMPA_TEST_DATABASE_URL` es obligatoria para los tests de integración: si falta, fallan con un mensaje explícito en vez de omitirse en silencio. Cubren el camino real de la UI (`Fields` con `sslmode=prefer`) y la propagación del mensaje y el SQLSTATE de PostgreSQL al frontend.
+
 ## 🛠 Requisitos previos (instalación manual)
 
 Si prefieres no usar Devbox:
