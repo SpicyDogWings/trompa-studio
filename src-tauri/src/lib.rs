@@ -1,4 +1,5 @@
 mod db;
+mod preferences;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -9,6 +10,8 @@ pub fn run() {
             db::disconnect,
             db::run_query,
             db::list_schema,
+            preferences::read_preferences,
+            preferences::write_preferences,
             db::start_query,
             db::cancel_query,
         ])
