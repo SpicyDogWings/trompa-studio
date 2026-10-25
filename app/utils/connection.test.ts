@@ -2,11 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_FIELDS,
   DEFAULT_URL,
-  STORAGE_KEY,
   buildConnectRequest,
   connectionLabel,
-  parsePreferences,
-  preferencesPayload,
   toDbError,
   validateConnection,
   type ConnectionFields
@@ -150,108 +147,6 @@ describe('connectionLabel', () => {
   })
 })
 
-describe('preferencesPayload', () => {
-  it('vacía la contraseña en modo fields', () => {
-    const payload = preferencesPayload(
-      'fields',
-      makeFields({ host: 'db.local', user: 'ana', password: 's3creta', sslmode: 'require' }),
-      DEFAULT_URL
-    )
-
-    expect(payload).toEqual({
-      mode: 'fields',
-      host: 'db.local',
-      port: '5432',
-      database: 'postgres',
-      user: 'ana',
-      password: '',
-      sslmode: 'require',
-      sslrootcert: ''
-    })
-    expect(JSON.stringify(payload)).not.toContain('s3creta')
-  })
-
-  it('conserva la ruta de la CA porque no es un secreto', () => {
-    const payload = preferencesPayload(
-      'fields',
-      makeFields({ sslrootcert: '/etc/ssl/ca.pem' }),
-      DEFAULT_URL
-    )
-
-    expect(payload.sslrootcert).toBe('/etc/ssl/ca.pem')
-  })
-
-  it('guarda solo mode y url en modo url', () => {
-    const payload = preferencesPayload('url', makeFields({ password: 's3creta' }), DEFAULT_URL)
-
-    expect(payload).toEqual({ mode: 'url', url: DEFAULT_URL, sslrootcert: '' })
-  })
-})
-
-describe('parsePreferences', () => {
-  it('restaura mode, url, campos y sslmode', () => {
-    const raw = JSON.stringify({
-      mode: 'fields',
-      host: 'db.local',
-      port: '6543',
-      database: 'ventas',
-      user: 'ana',
-      sslmode: 'require',
-      sslrootcert: '/etc/ssl/ca.pem'
-    })
-
-    expect(parsePreferences(raw)).toEqual({
-      mode: 'fields',
-      url: DEFAULT_URL,
-      fields: {
-        host: 'db.local',
-        port: '6543',
-        database: 'ventas',
-        user: 'ana',
-        password: '',
-        sslmode: 'require',
-        sslrootcert: '/etc/ssl/ca.pem'
-      }
-    })
-  })
-
-  it('restaura el modo url y la ruta de la CA', () => {
-    const parsed = parsePreferences(
-      JSON.stringify({
-        mode: 'url',
-        url: 'postgresql://ana@db:5432/ventas',
-        sslrootcert: '/etc/ssl/ca.pem'
-      })
-    )
-
-    expect(parsed?.mode).toBe('url')
-    expect(parsed?.url).toBe('postgresql://ana@db:5432/ventas')
-    expect(parsed?.fields.sslrootcert).toBe('/etc/ssl/ca.pem')
-  })
-
-  it('ignora una contraseña guardada', () => {
-    const parsed = parsePreferences(
-      JSON.stringify({ mode: 'fields', user: 'ana', password: 's3creta' })
-    )
-
-    expect(parsed?.fields.password).toBe('')
-    expect(parsed?.fields.user).toBe('ana')
-  })
-
-  it('devuelve null sin datos o con JSON corrupto', () => {
-    expect(parsePreferences(null)).toBeNull()
-    expect(parsePreferences('')).toBeNull()
-    expect(parsePreferences('{no es json')).toBeNull()
-    expect(parsePreferences('null')).toBeNull()
-  })
-
-  it('cae a prefer si el sslmode guardado no es válido', () => {
-    const parsed = parsePreferences(JSON.stringify({ mode: 'fields', sslmode: 'verify-full' }))
-
-    expect(parsed?.fields.sslmode).toBe('prefer')
-  })
-})
-
 describe('toDbError', () => {
   it('acepta un string', () => {
     expect(toDbError('boom')).toEqual({ message: 'boom' })
@@ -268,11 +163,5 @@ describe('toDbError', () => {
     expect(toDbError({ foo: 1 })).toEqual({ message: 'No se pudo conectar a PostgreSQL.' })
     expect(toDbError(42)).toEqual({ message: 'No se pudo conectar a PostgreSQL.' })
     expect(toDbError(undefined)).toEqual({ message: 'No se pudo conectar a PostgreSQL.' })
-  })
-})
-
-describe('STORAGE_KEY', () => {
-  it('mantiene la clave usada por index.vue', () => {
-    expect(STORAGE_KEY).toBe('trompa:last-connection')
   })
 })

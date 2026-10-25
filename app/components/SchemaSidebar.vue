@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SchemaSidebarPosition } from '~/composables/useSchema'
+import type { SchemaSidebarPosition } from '~/utils/preferences'
 import type { DbErrorPayload } from '~/utils/connection'
 import { isSchemaLeaf, type SchemaTreeItem } from '~/utils/schema'
 

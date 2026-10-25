@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SCHEMA_SIDEBAR_STORAGE_KEY, useSchema } from './useSchema'
+import { useSchema } from './useSchema'
+import { usePreferences } from './usePreferences'
+import { DEFAULT_PREFERENCES } from '~/utils/preferences'
 import { buildSchemaTree, type SchemaCatalog } from '~/utils/schema'
 
 const tauri = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -37,7 +39,7 @@ const GROUP = buildSchemaTree(FIRST_CATALOG)[0]?.children?.[0]
 const SCHEMA_NODE = buildSchemaTree(FIRST_CATALOG)[0]
 
 beforeEach(() => {
-  localStorage.clear()
+  usePreferences().resetPreferences()
   tauri.invoke.mockReset()
 })
 
@@ -145,53 +147,65 @@ describe('select', () => {
 })
 
 describe('posición del sidebar', () => {
-  it('guarda la posición en localStorage', () => {
+  it('guarda la posición en las preferencias', async () => {
+    tauri.invoke.mockResolvedValue(DEFAULT_PREFERENCES)
     const schema = useSchema()
 
     schema.setPosition('left')
 
     expect(schema.position.value).toBe('left')
-    expect(localStorage.getItem(SCHEMA_SIDEBAR_STORAGE_KEY)).toBe('left')
-
-    schema.setPosition('right')
-    expect(localStorage.getItem(SCHEMA_SIDEBAR_STORAGE_KEY)).toBe('right')
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
+        preferences: expect.objectContaining({ schema: { sidebarPosition: 'left' } })
+      })
+    )
   })
 
-  it('restaura una posición válida', () => {
-    localStorage.setItem(SCHEMA_SIDEBAR_STORAGE_KEY, 'left')
+  it('restaura la posición de las preferencias cargadas', async () => {
+    tauri.invoke.mockResolvedValueOnce({
+      ...DEFAULT_PREFERENCES,
+      schema: { sidebarPosition: 'left' }
+    })
+    await usePreferences().load()
+
     const schema = useSchema()
 
+    schema.position.value = 'right'
     schema.restorePosition()
 
     expect(schema.position.value).toBe('left')
   })
 
-  it('restaura right para valores inválidos o ausentes', () => {
+  it('restaura right cuando no hay preferencias cargadas', () => {
     const schema = useSchema()
 
-    localStorage.setItem(SCHEMA_SIDEBAR_STORAGE_KEY, 'top')
     schema.position.value = 'left'
     schema.restorePosition()
-    expect(schema.position.value).toBe('right')
 
-    schema.position.value = 'left'
-    localStorage.removeItem(SCHEMA_SIDEBAR_STORAGE_KEY)
-    schema.restorePosition()
     expect(schema.position.value).toBe('right')
   })
 
-  it('alterna la posición y la persiste', () => {
+  it('alterna la posición y la persiste', async () => {
+    tauri.invoke.mockResolvedValue(DEFAULT_PREFERENCES)
     const schema = useSchema()
 
     expect(schema.position.value).toBe('right')
 
     schema.togglePosition()
     expect(schema.position.value).toBe('left')
-    expect(localStorage.getItem(SCHEMA_SIDEBAR_STORAGE_KEY)).toBe('left')
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
+        preferences: expect.objectContaining({ schema: { sidebarPosition: 'left' } })
+      })
+    )
 
     schema.togglePosition()
     expect(schema.position.value).toBe('right')
-    expect(localStorage.getItem(SCHEMA_SIDEBAR_STORAGE_KEY)).toBe('right')
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
+        preferences: expect.objectContaining({ schema: { sidebarPosition: 'right' } })
+      })
+    )
   })
 })
 

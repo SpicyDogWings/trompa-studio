@@ -1,20 +1,14 @@
 import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { toDbError, type DbErrorPayload } from '~/utils/connection'
+import type { SchemaSidebarPosition } from '~/utils/preferences'
 import {
   buildSchemaTree,
   isSchemaLeaf,
   type SchemaCatalog,
   type SchemaTreeItem
 } from '~/utils/schema'
-
-export type SchemaSidebarPosition = 'left' | 'right'
-
-export const SCHEMA_SIDEBAR_STORAGE_KEY = 'trompa:schema-sidebar-position'
-
-function isSchemaSidebarPosition(value: unknown): value is SchemaSidebarPosition {
-  return value === 'left' || value === 'right'
-}
+import { usePreferences } from './usePreferences'
 
 export function useSchema() {
   const catalog = ref<SchemaCatalog | null>(null)
@@ -63,22 +57,12 @@ export function useSchema() {
   }
 
   function restorePosition() {
-    try {
-      const stored = localStorage.getItem(SCHEMA_SIDEBAR_STORAGE_KEY)
-      position.value = isSchemaSidebarPosition(stored) ? stored : 'right'
-    } catch {
-      position.value = 'right'
-    }
+    position.value = usePreferences().current().schema.sidebarPosition
   }
 
   function setPosition(next: SchemaSidebarPosition) {
     position.value = next
-
-    try {
-      localStorage.setItem(SCHEMA_SIDEBAR_STORAGE_KEY, next)
-    } catch {
-      // Si el almacenamiento no está disponible, la posición sigue en memoria.
-    }
+    void usePreferences().setSidebarPosition(next)
   }
 
   function togglePosition() {

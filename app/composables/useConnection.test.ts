@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { STORAGE_KEY } from '~/utils/connection'
+import { DEFAULT_PREFERENCES } from '~/utils/preferences'
 import { useConnection } from './useConnection'
+import { usePreferences } from './usePreferences'
 
 const tauri = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -8,32 +9,6 @@ const tauri = vi.hoisted(() => ({
 }))
 
 vi.mock('@tauri-apps/api/core', () => tauri)
-
-// El composable usa `localStorage`; si el entorno de Vitest no es DOM,
-// instalamos una implementación mínima en memoria.
-if (typeof globalThis.localStorage === 'undefined') {
-  const store = new Map<string, string>()
-
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        store.set(key, value)
-      },
-      removeItem: (key: string) => {
-        store.delete(key)
-      },
-      clear: () => {
-        store.clear()
-      },
-      key: (index: number) => Array.from(store.keys())[index] ?? null,
-      get length() {
-        return store.size
-      }
-    }
-  })
-}
 
 const CONNECTED_INFO = {
   database: 'ventas',
@@ -49,7 +24,7 @@ async function desktopConnection() {
 }
 
 beforeEach(() => {
-  localStorage.clear()
+  usePreferences().resetPreferences()
   tauri.invoke.mockReset()
   tauri.isTauri.mockReset()
   tauri.isTauri.mockReturnValue(true)
@@ -71,26 +46,6 @@ describe('checkDesktop', () => {
     await checkDesktop()
 
     expect(isDesktop.value).toBe(false)
-  })
-
-  it('deja isDesktop en false si el módulo de Tauri no se puede cargar', async () => {
-    vi.resetModules()
-    vi.doMock('@tauri-apps/api/core', () => {
-      throw new Error('Tauri no disponible')
-    })
-
-    try {
-      const { useConnection: freshUseConnection } = await import('./useConnection')
-      const { isDesktop, checkDesktop } = freshUseConnection()
-
-      await checkDesktop()
-
-      expect(isDesktop.value).toBe(false)
-    } finally {
-      // Restauramos el mock base para no contaminar el resto de tests.
-      vi.doMock('@tauri-apps/api/core', () => tauri)
-      vi.resetModules()
-    }
   })
 })
 
@@ -143,8 +98,12 @@ describe('connect', () => {
     expect(error.value).not.toBeNull()
   })
 
-  it('conecta, calcula la etiqueta y persiste sin la contraseña real', async () => {
-    tauri.invoke.mockResolvedValue(CONNECTED_INFO)
+  it('conecta, calcula la etiqueta y guarda las preferencias sin la contraseña real', async () => {
+    tauri.invoke.mockImplementation((command: string) =>
+      command === 'write_preferences'
+        ? Promise.resolve(DEFAULT_PREFERENCES)
+        : Promise.resolve(CONNECTED_INFO)
+    )
     const { fields, connection, connectionLabel, isConnecting, error, connect } =
       await desktopConnection()
 
@@ -157,7 +116,6 @@ describe('connect', () => {
 
     await connect()
 
-    expect(tauri.invoke).toHaveBeenCalledTimes(1)
     expect(tauri.invoke).toHaveBeenCalledWith('connect', {
       request: expect.objectContaining({
         mode: 'fields',
@@ -174,12 +132,23 @@ describe('connect', () => {
     expect(error.value).toBeNull()
     expect(isConnecting.value).toBe(false)
 
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
-    expect(saved.mode).toBe('fields')
-    expect(saved.host).toBe('db.example.com')
-    expect(saved.password ?? '').toBe('')
-    expect(saved.password).not.toBe('secreto-real')
-    expect(saved.sslrootcert).toBe('/etc/ssl/ca.pem')
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
+        preferences: expect.objectContaining({
+          connection: expect.objectContaining({
+            mode: 'fields',
+            host: 'db.example.com',
+            port: 6543,
+            database: 'ventas',
+            user: 'ana',
+            sslrootcert: '/etc/ssl/ca.pem'
+          })
+        })
+      })
+    )
+    const writeCall = tauri.invoke.mock.calls.find(([command]) => command === 'write_preferences')
+    expect(writeCall).toBeDefined()
+    expect(JSON.stringify(writeCall)).not.toContain('secreto-real')
   })
 
   it('normaliza un error con message y code', async () => {
@@ -201,22 +170,13 @@ describe('connect', () => {
     expect(error.value).toEqual({ message: 'sin conexión' })
   })
 
-  it('persiste el payload tras una conexión exitosa', async () => {
-    tauri.invoke.mockResolvedValue(CONNECTED_INFO)
+  it('no escribe preferencias si la conexión falla', async () => {
+    tauri.invoke.mockRejectedValueOnce({ message: 'relación no existe', code: '42P01' })
     const { connect } = await desktopConnection()
 
     await connect()
 
-    const raw = localStorage.getItem(STORAGE_KEY)
-    expect(raw).not.toBeNull()
-
-    const saved = JSON.parse(raw as string)
-    expect(saved).toMatchObject({
-      mode: 'fields',
-      host: 'localhost',
-      database: 'postgres',
-      user: 'postgres'
-    })
+    expect(tauri.invoke.mock.calls.some(([command]) => command === 'write_preferences')).toBe(false)
   })
 })
 
@@ -250,14 +210,16 @@ describe('disconnect', () => {
 })
 
 describe('restore', () => {
-  it('recupera modo y URL guardados', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
+  it('recupera modo y URL desde las preferencias', async () => {
+    tauri.invoke.mockResolvedValueOnce({
+      ...DEFAULT_PREFERENCES,
+      connection: {
+        ...DEFAULT_PREFERENCES.connection,
         mode: 'url',
         url: 'postgresql://ana@db.example.com:6543/ventas'
-      })
-    )
+      }
+    })
+    await usePreferences().load()
 
     const { mode, url, restore } = useConnection()
 
@@ -267,20 +229,20 @@ describe('restore', () => {
     expect(url.value).toBe('postgresql://ana@db.example.com:6543/ventas')
   })
 
-  it('recupera los campos e ignora una contraseña manipulada', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        mode: 'fields',
+  it('recupera los campos y deja la contraseña siempre vacía', async () => {
+    tauri.invoke.mockResolvedValueOnce({
+      ...DEFAULT_PREFERENCES,
+      connection: {
+        ...DEFAULT_PREFERENCES.connection,
         host: 'db.example.com',
-        port: '6543',
+        port: 6543,
         database: 'ventas',
         user: 'ana',
-        password: 'super-secreta',
         sslmode: 'require',
         sslrootcert: '/etc/ssl/ca.pem'
-      })
-    )
+      }
+    })
+    await usePreferences().load()
 
     const { mode, fields, restore } = useConnection()
 

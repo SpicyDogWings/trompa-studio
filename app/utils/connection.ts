@@ -1,5 +1,3 @@
-export const STORAGE_KEY = 'trompa:last-connection'
-
 export type ConnectionMode = 'fields' | 'url'
 
 export type SslMode = 'prefer' | 'require' | 'disable'
@@ -49,12 +47,6 @@ export const DEFAULT_FIELDS: ConnectionFields = {
 }
 
 export const DEFAULT_URL = 'postgresql://postgres@localhost:5432/postgres'
-
-const SSL_MODES: readonly SslMode[] = ['prefer', 'require', 'disable']
-
-function isSslMode(value: unknown): value is SslMode {
-  return typeof value === 'string' && (SSL_MODES as readonly string[]).includes(value)
-}
 
 const PORT_MESSAGE = 'El puerto debe ser un número entre 1 y 65535.'
 const DEFAULT_PORT = 5432
@@ -113,45 +105,6 @@ export function connectionLabel(
   if (mode === 'url') return url.trim()
 
   return `${fields.user.trim()}@${fields.host.trim()}:${fields.port.trim()}/${fields.database.trim()}`
-}
-
-export function preferencesPayload(
-  mode: ConnectionMode,
-  fields: ConnectionFields,
-  url: string
-): Record<string, unknown> {
-  if (mode === 'url') return { mode: 'url', url, sslrootcert: fields.sslrootcert }
-
-  return { mode: 'fields', ...fields, password: '' }
-}
-
-export function parsePreferences(
-  raw: string | null
-): { mode: ConnectionMode; fields: ConnectionFields; url: string } | null {
-  if (!raw) return null
-
-  let saved: unknown
-  try {
-    saved = JSON.parse(raw)
-  } catch {
-    return null
-  }
-
-  if (!saved || typeof saved !== 'object') return null
-
-  const data = saved as Record<string, unknown>
-  const fields: ConnectionFields = { ...DEFAULT_FIELDS }
-  const mode: ConnectionMode = data.mode === 'url' ? 'url' : 'fields'
-  const url = typeof data.url === 'string' ? data.url : DEFAULT_URL
-
-  for (const key of ['host', 'port', 'database', 'user', 'sslrootcert'] as const) {
-    const value = data[key]
-    if (typeof value === 'string') fields[key] = value
-  }
-
-  fields.sslmode = isSslMode(data.sslmode) ? data.sslmode : 'prefer'
-
-  return { mode, fields, url }
 }
 
 export function toDbError(cause: unknown): DbErrorPayload {
