@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-use deadpool_postgres::{Manager, Object, Pool};
+use deadpool_postgres::{Manager, Object, Pool, PoolError, TimeoutType};
 use futures_util::{StreamExt, pin_mut};
 use rustls::{ClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
@@ -152,17 +152,73 @@ impl DbError {
             code: None,
         }
     }
+
+    /// Traduce un fallo del pool conservando el error real del backend.
+    ///
+    /// El `Display` de `PoolError` es genérico ("db error"), pero el error
+    /// de PostgreSQL viaja en `PoolError::Backend`, así que hay que
+    /// desenvolverlo en vez de formatear el envoltorio.
+    fn from_pool_error(context: &str, error: PoolError) -> Self {
+        let mut mapped = match error {
+            PoolError::Backend(error) => Self::from(error),
+            PoolError::Timeout(TimeoutType::Wait) => {
+                Self::new("se agotó el tiempo de espera para obtener una conexión del pool")
+            }
+            PoolError::Timeout(TimeoutType::Create) => {
+                Self::new("se agotó el tiempo de espera al crear una conexión")
+            }
+            PoolError::Timeout(TimeoutType::Recycle) => {
+                Self::new("se agotó el tiempo de espera al reciclar una conexión")
+            }
+            PoolError::Closed => Self::new("el pool de conexiones está cerrado"),
+            PoolError::NoRuntimeSpecified => {
+                Self::new("el pool de conexiones no tiene un runtime asociado")
+            }
+            PoolError::PostCreateHook(error) => {
+                Self::new(format!("el hook post_create del pool falló: {error}"))
+            }
+        };
+
+        mapped.message = format!("{context}: {}", mapped.message);
+        mapped
+    }
+}
+
+/// Compone un mensaje con la cadena completa de causas de un error.
+///
+/// `tokio_postgres::Error` solo describe la clase del fallo ("db error",
+/// "error connecting to server"); el detalle real (el `DbError` de
+/// PostgreSQL o el error de E/S) vive en `source()`.
+fn describe_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        let detail = cause.to_string();
+        if !detail.is_empty() && !message.contains(&detail) {
+            message.push_str(": ");
+            message.push_str(&detail);
+        }
+        source = cause.source();
+    }
+
+    message
 }
 
 impl From<tokio_postgres::Error> for DbError {
     fn from(error: tokio_postgres::Error) -> Self {
-        let code = error.code().map(|code| code.code().to_string());
-        let message = error
-            .as_db_error()
-            .map(|db_error| db_error.message().to_string())
-            .unwrap_or_else(|| error.to_string());
+        // Un error del servidor ya trae el mensaje y el SQLSTATE reales.
+        if let Some(db_error) = error.as_db_error() {
+            return Self {
+                message: db_error.message().to_string(),
+                code: Some(db_error.code().code().to_string()),
+            };
+        }
 
-        Self { message, code }
+        Self {
+            message: describe_error_chain(&error),
+            code: None,
+        }
     }
 }
 
@@ -336,7 +392,7 @@ pub async fn connect_with(
     let client = pool
         .get()
         .await
-        .map_err(|error| DbError::new(format!("No se pudo conectar a PostgreSQL: {error}")))?;
+        .map_err(|error| DbError::from_pool_error("No se pudo conectar a PostgreSQL", error))?;
 
     let row = client
         .query_one(
@@ -381,7 +437,7 @@ pub async fn run_query_with(state: &DbState, sql: &str) -> Result<QueryResult, D
     let client = pool
         .get()
         .await
-        .map_err(|error| DbError::new(format!("No se pudo obtener una conexión: {error}")))?;
+        .map_err(|error| DbError::from_pool_error("No se pudo obtener una conexión", error))?;
 
     let started = Instant::now();
     let messages = client.simple_query(sql).await?;
@@ -445,7 +501,7 @@ where
     let client = pool
         .get()
         .await
-        .map_err(|error| DbError::new(format!("No se pudo obtener una conexión: {error}")))?;
+        .map_err(|error| DbError::from_pool_error("No se pudo obtener una conexión", error))?;
 
     let token = client.cancel_token();
     let query_id = state.next_query_id();
@@ -595,6 +651,7 @@ pub async fn cancel_query(query_id: u64, state: State<'_, DbState>) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deadpool_postgres::HookError;
     use serde_json::json;
     use std::time::Duration;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -889,25 +946,164 @@ mod tests {
         assert_eq!(error.code, None);
     }
 
+    /// Error de `tokio-postgres` sin `DbError` asociado, para probar el mapeo
+    /// sin depender de un servidor real.
+    fn error_de_configuracion() -> tokio_postgres::Error {
+        PgConfig::from_str("postgresql://localhost:no-es-un-puerto/db")
+            .expect_err("la URL debía ser inválida")
+    }
+
+    #[test]
+    fn error_sin_db_compone_la_cadena_de_causas() {
+        let error = DbError::from(error_de_configuracion());
+
+        assert_eq!(
+            error.message,
+            "invalid connection string: invalid value for option `port`"
+        );
+        assert_eq!(error.code, None);
+    }
+
+    #[test]
+    fn describe_error_chain_agrega_causas_y_evita_duplicados() {
+        #[derive(Debug)]
+        struct Envoltorio {
+            mensaje: &'static str,
+            causa: std::io::Error,
+        }
+
+        impl std::fmt::Display for Envoltorio {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(self.mensaje)
+            }
+        }
+
+        impl std::error::Error for Envoltorio {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.causa)
+            }
+        }
+
+        let simple = Envoltorio {
+            mensaje: "fallo de red",
+            causa: std::io::Error::other("conexión rechazada"),
+        };
+        assert_eq!(
+            describe_error_chain(&simple),
+            "fallo de red: conexión rechazada"
+        );
+
+        // Si la causa ya está en el mensaje, no se repite.
+        let repetido = Envoltorio {
+            mensaje: "fallo de red: conexión rechazada",
+            causa: std::io::Error::other("conexión rechazada"),
+        };
+        assert_eq!(
+            describe_error_chain(&repetido),
+            "fallo de red: conexión rechazada"
+        );
+    }
+
+    #[test]
+    fn pool_error_backend_expone_el_error_subyacente() {
+        let error = DbError::from_pool_error(
+            "No se pudo conectar a PostgreSQL",
+            PoolError::Backend(error_de_configuracion()),
+        );
+
+        assert_eq!(
+            error.message,
+            "No se pudo conectar a PostgreSQL: invalid connection string: \
+             invalid value for option `port`"
+        );
+        assert_eq!(error.code, None);
+        assert!(!error.message.contains("db error"));
+    }
+
+    #[test]
+    fn pool_error_timeout_y_estado_son_legibles() {
+        let casos = [
+            (
+                PoolError::Timeout(TimeoutType::Wait),
+                "No se pudo obtener una conexión: se agotó el tiempo de espera \
+                 para obtener una conexión del pool",
+            ),
+            (
+                PoolError::Timeout(TimeoutType::Create),
+                "No se pudo obtener una conexión: se agotó el tiempo de espera \
+                 al crear una conexión",
+            ),
+            (
+                PoolError::Timeout(TimeoutType::Recycle),
+                "No se pudo obtener una conexión: se agotó el tiempo de espera \
+                 al reciclar una conexión",
+            ),
+            (
+                PoolError::Closed,
+                "No se pudo obtener una conexión: el pool de conexiones está cerrado",
+            ),
+            (
+                PoolError::NoRuntimeSpecified,
+                "No se pudo obtener una conexión: el pool de conexiones no tiene un \
+                 runtime asociado",
+            ),
+            (
+                PoolError::PostCreateHook(HookError::message("hook roto")),
+                "No se pudo obtener una conexión: el hook post_create del pool falló: \
+                 hook roto",
+            ),
+        ];
+
+        for (error, esperado) in casos {
+            let mapped = DbError::from_pool_error("No se pudo obtener una conexión", error);
+            assert_eq!(mapped.message, esperado);
+            assert_eq!(mapped.code, None);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Tests de integración: requieren TROMPA_TEST_DATABASE_URL.
     //
-    // Si la variable no está definida cada test se omite sin fallar, de
-    // modo que `cargo test --lib` funciona en cualquier máquina.
+    // Si la variable no está definida los tests fallan de forma explícita:
+    // un `ok` silencioso haría creer que se probó la conexión real.
+    //
+    //   TROMPA_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable \
+    //     cargo test --lib --manifest-path src-tauri/Cargo.toml
     // ------------------------------------------------------------------
 
-    /// Devuelve la URL de la base de datos de pruebas, o `None` si no se ha
-    /// configurado. En ese caso deja constancia por stderr y el test termina.
-    fn test_database_url() -> Option<String> {
-        match std::env::var("TROMPA_TEST_DATABASE_URL") {
-            Ok(url) if !url.trim().is_empty() => Some(url),
-            _ => {
-                eprintln!(
-                    "TROMPA_TEST_DATABASE_URL no está definida; se omite el test de integración"
-                );
-                None
-            }
-        }
+    /// Devuelve la URL de la base de datos de pruebas.
+    ///
+    /// Falla con un mensaje claro si la variable no está configurada, para
+    /// que los tests de integración nunca se omitan sin avisar.
+    fn test_database_url() -> String {
+        let url = std::env::var("TROMPA_TEST_DATABASE_URL").unwrap_or_default();
+        assert!(
+            !url.trim().is_empty(),
+            "TROMPA_TEST_DATABASE_URL no está definida: los tests de integración \
+             necesitan un PostgreSQL real (por ejemplo \
+             postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable)"
+        );
+        url.trim().to_string()
+    }
+
+    /// Separa la URL de pruebas en los campos que manda la UI.
+    fn fields_from_url(url: &str) -> (String, u16, String, String, String) {
+        let config =
+            PgConfig::from_str(url).expect("TROMPA_TEST_DATABASE_URL debe ser una URL válida");
+
+        let host = match config.get_hosts().first() {
+            Some(Host::Tcp(host)) => host.clone(),
+            _ => panic!("TROMPA_TEST_DATABASE_URL debe apuntar a un host TCP"),
+        };
+        let port = config.get_ports().first().copied().unwrap_or(5432);
+        let database = config.get_dbname().unwrap_or("postgres").to_string();
+        let user = config.get_user().unwrap_or("postgres").to_string();
+        let password = config
+            .get_password()
+            .map(|password| String::from_utf8_lossy(password).into_owned())
+            .unwrap_or_default();
+
+        (host, port, database, user, password)
     }
 
     async fn connected_state(url: &str) -> DbState {
@@ -926,9 +1122,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_connect_with_devuelve_info_y_deja_pool() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
 
         let state = DbState::default();
         let info = connect_with(
@@ -950,11 +1144,141 @@ mod tests {
         assert!(state.pool().is_ok(), "el pool debe quedar disponible");
     }
 
+    /// Regresión del camino exacto de la UI: `Fields` con los valores por
+    /// defecto del formulario y `sslmode: prefer` contra el PostgreSQL de
+    /// devbox. Antes este camino no estaba cubierto y un fallo real se
+    /// mostraba como el genérico "db error".
+    #[tokio::test]
+    async fn integracion_connect_with_fields_prefer_localhost_como_la_ui() {
+        let url = test_database_url();
+        let (_, port, database, user, password) = fields_from_url(&url);
+
+        let state = DbState::default();
+        let info = connect_with(
+            ConnectRequest::Fields {
+                host: "localhost".to_string(),
+                port,
+                database: database.clone(),
+                user: user.clone(),
+                password,
+                sslmode: SslModeParam::Prefer,
+                sslrootcert: None,
+            },
+            &state,
+        )
+        .await
+        .expect("el camino Fields + sslmode=prefer de la UI debía conectar");
+
+        assert_eq!(info.database, database);
+        assert_eq!(info.user, user);
+        assert!(state.pool().is_ok(), "el pool debe quedar disponible");
+
+        let result = run_query_with(&state, "SELECT current_database()::text")
+            .await
+            .expect("la consulta debía funcionar tras conectar");
+        assert_eq!(
+            result.rows,
+            vec![vec![Some(database)]],
+            "la conexión debía quedar en la base elegida"
+        );
+    }
+
+    /// El mismo camino de la UI, pero con el host que indique la URL de
+    /// pruebas, para que el test sirva también fuera de devbox.
+    #[tokio::test]
+    async fn integracion_connect_with_fields_prefer() {
+        let url = test_database_url();
+        let (host, port, database, user, password) = fields_from_url(&url);
+
+        let state = DbState::default();
+        let info = connect_with(
+            ConnectRequest::Fields {
+                host,
+                port,
+                database: database.clone(),
+                user,
+                password,
+                sslmode: SslModeParam::Prefer,
+                sslrootcert: None,
+            },
+            &state,
+        )
+        .await
+        .expect("el camino Fields + sslmode=prefer debía conectar");
+
+        assert_eq!(info.database, database);
+        assert!(state.pool().is_ok());
+    }
+
+    /// Si la base de datos indicada no existe, el frontend debe recibir el
+    /// mensaje y el SQLSTATE reales de PostgreSQL, no "db error".
+    #[tokio::test]
+    async fn integracion_connect_with_base_inexistente_expone_mensaje_y_sqlstate() {
+        let url = test_database_url();
+        let (host, port, _, user, password) = fields_from_url(&url);
+        let database = format!("trompa_inexistente_{}", std::process::id());
+
+        let error = connect_with(
+            ConnectRequest::Fields {
+                host,
+                port,
+                database: database.clone(),
+                user,
+                password,
+                sslmode: SslModeParam::Prefer,
+                sslrootcert: None,
+            },
+            &DbState::default(),
+        )
+        .await
+        .expect_err("la base de datos no existe");
+
+        assert_eq!(error.code.as_deref(), Some("3D000"));
+        assert!(
+            error.message.contains(&database),
+            "el mensaje debía nombrar la base: {}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("db error"),
+            "el mensaje genérico de deadpool no debe filtrarse: {}",
+            error.message
+        );
+    }
+
+    /// Un usuario inexistente también debe reportarse con su SQLSTATE.
+    #[tokio::test]
+    async fn integracion_connect_with_usuario_inexistente_expone_sqlstate() {
+        let url = test_database_url();
+        let (host, port, database, _, password) = fields_from_url(&url);
+        let user = format!("trompa_usuario_{}", std::process::id());
+
+        let error = connect_with(
+            ConnectRequest::Fields {
+                host,
+                port,
+                database,
+                user: user.clone(),
+                password,
+                sslmode: SslModeParam::Prefer,
+                sslrootcert: None,
+            },
+            &DbState::default(),
+        )
+        .await
+        .expect_err("el usuario no existe");
+
+        assert_eq!(error.code.as_deref(), Some("28000"));
+        assert!(
+            error.message.contains(&user),
+            "el mensaje debía nombrar el usuario: {}",
+            error.message
+        );
+    }
+
     #[tokio::test]
     async fn integracion_run_query_with_devuelve_columnas_y_nulos() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         let result = run_query_with(&state, "SELECT 1::text AS n, NULL::text AS vacio")
@@ -967,9 +1291,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_run_query_with_cuenta_filas() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         let result = run_query_with(&state, "SELECT generate_series(1,3)")
@@ -982,9 +1304,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_error_sql_expone_codigo_y_mensaje() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         let error = run_query_with(&state, "SELECT * FROM tabla_que_no_existe_123456")
@@ -1001,9 +1321,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_conexion_fallida_no_pisa_el_pool_anterior() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         let failed = connect_with(
@@ -1028,9 +1346,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_disconnect_with_limpia_el_estado() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         disconnect_with(&state).expect("disconnect_with debía funcionar");
@@ -1051,9 +1367,7 @@ mod tests {
     /// visible es el de la última sentencia.
     #[tokio::test]
     async fn integracion_varias_sentencias_devuelve_la_ultima() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
 
         let result = run_query_with(&state, "SELECT 1 AS a; SELECT 2 AS b")
@@ -1093,9 +1407,7 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_start_query_emite_columnas_filas_y_done() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
         let (tx, mut rx) = event_channel();
 
@@ -1166,16 +1478,21 @@ mod tests {
 
     #[tokio::test]
     async fn integracion_cancelar_consulta_larga_emite_error_57014() {
-        let Some(url) = test_database_url() else {
-            return;
-        };
+        let url = test_database_url();
         let state = connected_state(&url).await;
         let (tx, mut rx) = event_channel();
 
         let started = Instant::now();
-        let query_id = start_query_with(&state, "SELECT pg_sleep(30)", move |event| {
-            let _ = tx.send(event);
-        })
+        // `generate_series` envía el `RowDescription` en cuanto empieza a
+        // ejecutarse, así que hay columnas antes de cancelar. Con
+        // `pg_sleep` el servidor no manda descripción hasta terminar.
+        let query_id = start_query_with(
+            &state,
+            "SELECT generate_series(1, 1000000000)",
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
         .await
         .expect("start_query_with debía lanzar la consulta");
 
