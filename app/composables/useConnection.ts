@@ -2,11 +2,8 @@ import { reactive, ref } from 'vue'
 import {
   DEFAULT_FIELDS,
   DEFAULT_URL,
-  STORAGE_KEY,
   buildConnectRequest,
   connectionLabel as formatConnectionLabel,
-  parsePreferences,
-  preferencesPayload,
   toDbError,
   validateConnection,
   type ConnectionFields,
@@ -14,6 +11,8 @@ import {
   type ConnectionMode,
   type DbErrorPayload
 } from '~/utils/connection'
+import { connectionPreferences, fieldsFromConnection } from '~/utils/preferences'
+import { usePreferences } from './usePreferences'
 
 export function useConnection() {
   const isDesktop = ref(false)
@@ -29,18 +28,13 @@ export function useConnection() {
   const connectionLabel = ref('')
 
   function restore() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      const saved = parsePreferences(raw)
-      if (!saved) return
+    // Se llama después de `load()` de preferencias: el estado ya está hidratado.
+    // `fieldsFromConnection` nunca devuelve la contraseña guardada.
+    const saved = fieldsFromConnection(usePreferences().current().connection)
 
-      mode.value = saved.mode
-      url.value = saved.url
-      // `parsePreferences` nunca devuelve la contraseña guardada.
-      Object.assign(fields, saved.fields)
-    } catch {
-      // Si el almacenamiento está corrupto, empezamos de cero.
-    }
+    mode.value = saved.mode
+    url.value = saved.url
+    Object.assign(fields, saved.fields)
   }
 
   async function checkDesktop() {
@@ -49,16 +43,6 @@ export function useConnection() {
       isDesktop.value = isTauri()
     } catch {
       isDesktop.value = false
-    }
-  }
-
-  function persist() {
-    const payload = preferencesPayload(mode.value, fields, url.value)
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-    } catch {
-      // Sin persistencia la app sigue funcionando.
     }
   }
 
@@ -88,7 +72,8 @@ export function useConnection() {
       })
       connectionLabel.value = formatConnectionLabel(mode.value, fields, url.value)
 
-      persist()
+      // La contraseña no viaja: `connectionPreferences` la omite.
+      void usePreferences().setConnection(connectionPreferences(mode.value, fields, url.value))
     } catch (cause) {
       error.value = toDbError(cause)
     } finally {
