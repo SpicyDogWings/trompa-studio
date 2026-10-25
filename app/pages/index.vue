@@ -1,16 +1,7 @@
 <script setup lang="ts">
+import { useConnection } from '~/composables/useConnection'
+
 useHead({ title: 'Conectar · Trompa Studio' })
-
-interface ConnectionInfo {
-  database: string
-  user: string
-  serverVersion: string
-}
-
-interface DbErrorPayload {
-  message: string
-  code?: string
-}
 
 const sslOptions = [
   { label: 'Preferir (por defecto)', value: 'prefer' },
@@ -18,147 +9,26 @@ const sslOptions = [
   { label: 'Desactivar', value: 'disable' }
 ]
 
-const STORAGE_KEY = 'trompa:last-connection'
-
-const isDesktop = ref(false)
-const isConnecting = ref(false)
-const showPassword = ref(false)
-const mode = ref<'fields' | 'url'>('fields')
-
-const fields = reactive({
-  host: 'localhost',
-  port: '5432',
-  database: 'postgres',
-  user: 'postgres',
-  password: '',
-  sslmode: 'prefer'
-})
-
-const url = ref('postgresql://postgres@localhost:5432/postgres')
-
-const error = ref<DbErrorPayload | null>(null)
-const connection = ref<ConnectionInfo | null>(null)
-const connectionLabel = ref('')
+const {
+  isDesktop,
+  isConnecting,
+  showPassword,
+  mode,
+  fields,
+  url,
+  error,
+  connection,
+  connectionLabel,
+  restore,
+  checkDesktop,
+  connect,
+  disconnect
+} = useConnection()
 
 onMounted(async () => {
   restore()
-
-  try {
-    const { isTauri } = await import('@tauri-apps/api/core')
-    isDesktop.value = isTauri()
-  } catch {
-    isDesktop.value = false
-  }
+  await checkDesktop()
 })
-
-function restore() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return
-
-    const saved = JSON.parse(raw) as Partial<typeof fields> & {
-      mode?: 'fields' | 'url'
-      url?: string
-    }
-
-    if (saved.mode === 'fields' || saved.mode === 'url') mode.value = saved.mode
-    if (typeof saved.url === 'string') url.value = saved.url
-
-    for (const key of ['host', 'port', 'database', 'user', 'sslmode'] as const) {
-      const value = saved[key]
-      if (typeof value === 'string') fields[key] = value
-    }
-  } catch {
-    // Si el almacenamiento está corrupto, empezamos de cero.
-  }
-}
-
-function persist() {
-  const payload = mode.value === 'url'
-    ? { mode: 'url', url: url.value }
-    : { mode: 'fields', ...fields, password: '' }
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-  } catch {
-    // Sin persistencia la app sigue funcionando.
-  }
-}
-
-async function connect() {
-  error.value = null
-
-  if (!isDesktop.value) {
-    error.value = {
-      message: 'La conexión se ejecuta en el backend Rust. Abre la app con pnpm tauri dev.'
-    }
-    return
-  }
-
-  if (mode.value === 'fields') {
-    if (!fields.host.trim() || !fields.database.trim() || !fields.user.trim()) {
-      error.value = { message: 'Host, base de datos y usuario son obligatorios.' }
-      return
-    }
-  } else if (!url.value.trim()) {
-    error.value = { message: 'Pega una URL de conexión.' }
-    return
-  }
-
-  isConnecting.value = true
-
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-
-    const request = mode.value === 'url'
-      ? { mode: 'url' as const, url: url.value.trim() }
-      : {
-          mode: 'fields' as const,
-          host: fields.host.trim(),
-          port: Number.parseInt(fields.port, 10) || 5432,
-          database: fields.database.trim(),
-          user: fields.user.trim(),
-          password: fields.password,
-          sslmode: fields.sslmode
-        }
-
-    connection.value = await invoke<ConnectionInfo>('connect', { request })
-    connectionLabel.value = mode.value === 'url'
-      ? url.value.trim()
-      : `${fields.user.trim()}@${fields.host.trim()}:${fields.port}/${fields.database.trim()}`
-
-    persist()
-  } catch (cause) {
-    error.value = toDbError(cause)
-  } finally {
-    isConnecting.value = false
-  }
-}
-
-function toDbError(cause: unknown): DbErrorPayload {
-  if (typeof cause === 'string') return { message: cause }
-
-  if (cause && typeof cause === 'object') {
-    const payload = cause as Partial<DbErrorPayload>
-    if (typeof payload.message === 'string') {
-      return { message: payload.message, code: payload.code }
-    }
-  }
-
-  return { message: 'No se pudo conectar a PostgreSQL.' }
-}
-
-async function disconnect() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('disconnect')
-  } catch {
-    // Aunque falle en el backend, limpiamos el estado local.
-  }
-
-  connection.value = null
-  error.value = null
-}
 </script>
 
 <template>
