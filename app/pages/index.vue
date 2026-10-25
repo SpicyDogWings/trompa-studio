@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useConnection } from '~/composables/useConnection'
+import { useSchema } from '~/composables/useSchema'
 
 useHead({ title: 'Conectar · Trompa Studio' })
 
@@ -25,14 +27,40 @@ const {
   disconnect
 } = useConnection()
 
+const {
+  tree,
+  selected,
+  isLoading: schemaLoading,
+  error: schemaError,
+  position,
+  select,
+  setPosition,
+  load: loadSchema,
+  reset: resetSchema,
+  restorePosition
+} = useSchema()
+
+watch(
+  connection,
+  (value) => {
+    if (value) void loadSchema()
+    else resetSchema()
+  },
+  { immediate: true }
+)
+
 onMounted(async () => {
   restore()
+  restorePosition()
   await checkDesktop()
 })
 </script>
 
 <template>
-  <div class="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-default px-4 py-10">
+  <div
+    v-if="!connection"
+    class="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-default px-4 py-10"
+  >
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div class="absolute -top-40 left-1/2 size-[40rem] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
       <div class="absolute -bottom-48 right-0 size-[30rem] rounded-full bg-violet-500/10 blur-3xl" />
@@ -45,11 +73,11 @@ onMounted(async () => {
         </div>
         <h1 class="text-2xl font-bold tracking-tight text-highlighted">Trompa Studio</h1>
         <p class="mt-1 text-sm text-muted">
-          {{ connection ? 'Conexión establecida' : 'Conecta a tu base de datos PostgreSQL' }}
+          Conecta a tu base de datos PostgreSQL
         </p>
       </div>
 
-      <UCard v-if="!connection" :ui="{ body: 'p-6 sm:p-8' }">
+      <UCard :ui="{ body: 'p-6 sm:p-8' }">
         <div class="mb-6 grid grid-cols-2 gap-1 rounded-xl bg-elevated p-1">
           <UButton
             label="Campos"
@@ -199,50 +227,69 @@ onMounted(async () => {
         </form>
       </UCard>
 
-      <UCard v-else :ui="{ body: 'p-6 sm:p-8' }">
-        <div class="flex items-start gap-4">
-          <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-success/10">
-            <UIcon name="i-lucide-database-zap" class="size-6 text-success" />
-          </div>
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-highlighted">Conectado</h2>
-            <p class="truncate font-mono text-sm text-muted" :title="connectionLabel">
-              {{ connectionLabel }}
-            </p>
-          </div>
-        </div>
-
-        <dl class="mt-6 grid grid-cols-1 gap-4 rounded-xl bg-elevated/60 p-4 text-sm sm:grid-cols-3">
-          <div class="min-w-0">
-            <dt class="text-muted">Base</dt>
-            <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.database }}</dd>
-          </div>
-          <div class="min-w-0">
-            <dt class="text-muted">Usuario</dt>
-            <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.user }}</dd>
-          </div>
-          <div class="min-w-0">
-            <dt class="text-muted">Servidor</dt>
-            <dd class="mt-0.5 truncate font-medium text-highlighted" :title="connection.serverVersion">
-              {{ connection.serverVersion }}
-            </dd>
-          </div>
-        </dl>
-
-        <UButton
-          label="Desconectar"
-          color="neutral"
-          variant="outline"
-          icon="i-lucide-unplug"
-          block
-          class="mt-6"
-          @click="disconnect"
-        />
-      </UCard>
-
       <p class="mt-6 text-center text-xs text-dimmed">
         Se recuerdan host, puerto, base, usuario, SSL y la ruta de la CA. La contraseña nunca se guarda.
       </p>
     </div>
+  </div>
+
+  <div v-else class="flex h-screen overflow-hidden bg-default">
+    <main class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
+      <div class="mx-auto max-w-3xl">
+        <UCard :ui="{ body: 'p-6 sm:p-8' }">
+          <div class="flex items-start gap-4">
+            <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-success/10">
+              <UIcon name="i-lucide-database-zap" class="size-6 text-success" />
+            </div>
+            <div class="min-w-0">
+              <h2 class="text-lg font-semibold text-highlighted">Conectado</h2>
+              <p class="truncate font-mono text-sm text-muted" :title="connectionLabel">
+                {{ connectionLabel }}
+              </p>
+            </div>
+          </div>
+
+          <dl class="mt-6 grid grid-cols-1 gap-4 rounded-xl bg-elevated/60 p-4 text-sm sm:grid-cols-3">
+            <div class="min-w-0">
+              <dt class="text-muted">Base</dt>
+              <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.database }}</dd>
+            </div>
+            <div class="min-w-0">
+              <dt class="text-muted">Usuario</dt>
+              <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.user }}</dd>
+            </div>
+            <div class="min-w-0">
+              <dt class="text-muted">Servidor</dt>
+              <dd class="mt-0.5 truncate font-medium text-highlighted" :title="connection.serverVersion">
+                {{ connection.serverVersion }}
+              </dd>
+            </div>
+          </dl>
+
+          <UButton
+            label="Desconectar"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-unplug"
+            block
+            class="mt-6"
+            @click="disconnect"
+          />
+        </UCard>
+      </div>
+    </main>
+
+    <SchemaSidebar
+      :class="position === 'left' ? 'order-first border-r' : 'order-last border-l'"
+      :database="connection.database"
+      :items="tree"
+      :selected="selected"
+      :loading="schemaLoading"
+      :error="schemaError"
+      :position="position"
+      @update:selected="select"
+      @update:position="setPosition"
+      @retry="loadSchema"
+    />
   </div>
 </template>
