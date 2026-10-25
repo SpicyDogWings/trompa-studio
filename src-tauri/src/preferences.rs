@@ -233,13 +233,35 @@ pub async fn write_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Directorio temporal propio del proceso de test, limpio al inicio.
-    fn temporary_directory() -> PathBuf {
-        let directory = std::env::temp_dir().join(format!("trompa-prefs-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&directory);
-        fs::create_dir_all(&directory).expect("crear el directorio temporal");
-        directory
+    /// Directorio temporal exclusivo de cada test: se borra al soltarlo.
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+            // Los tests corren en paralelo dentro del mismo proceso: sin un
+            // nombre propio, uno borraría el directorio de otro.
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("trompa-prefs-{}-{id}", std::process::id()));
+
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("crear el directorio temporal");
+            Self(path)
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     fn non_default() -> Preferences {
@@ -265,7 +287,8 @@ mod tests {
 
     #[test]
     fn crea_el_archivo_con_defaults() {
-        let path = temporary_directory().join("preferences.toml");
+        let directory = TempDirectory::new();
+        let path = directory.join("preferences.toml");
 
         let preferences = read_preferences_at(&path).expect("leer preferencias");
 
@@ -278,7 +301,8 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let path = temporary_directory().join("preferences.toml");
+        let directory = TempDirectory::new();
+        let path = directory.join("preferences.toml");
 
         let written = write_preferences_at(&path, non_default()).expect("escribir preferencias");
         let read = read_preferences_at(&path).expect("leer preferencias");
@@ -289,7 +313,7 @@ mod tests {
 
     #[test]
     fn toml_invalido_devuelve_defaults_y_conserva_el_archivo() {
-        let directory = temporary_directory();
+        let directory = TempDirectory::new();
         let path = directory.join("preferences.toml");
         let corrupto = "esto no es toml {{";
         fs::write(&path, corrupto).expect("escribir el archivo corrupto");
@@ -302,7 +326,7 @@ mod tests {
 
     #[test]
     fn normaliza_valores_desconocidos() {
-        let directory = temporary_directory();
+        let directory = TempDirectory::new();
         let path = directory.join("preferences.toml");
         fs::write(
             &path,
@@ -320,7 +344,7 @@ mod tests {
 
     #[test]
     fn claves_desconocidas_se_ignoran() {
-        let directory = temporary_directory();
+        let directory = TempDirectory::new();
         let path = directory.join("preferences.toml");
         fs::write(&path, "[otra]\nvalor = 1\n").expect("escribir el archivo");
 
@@ -331,7 +355,8 @@ mod tests {
 
     #[test]
     fn write_normaliza_y_serializa() {
-        let path = temporary_directory().join("preferences.toml");
+        let directory = TempDirectory::new();
+        let path = directory.join("preferences.toml");
         let mut preferences = Preferences::default();
         preferences.ui.color_mode = "neon".to_owned();
 
