@@ -1,0 +1,6 @@
+name = "Trompa"
+description = "Azul y pizarra sobre los valores por defecto de Nuxt UI."
+
+[palette]
+primary = "blue"
+neutral = "slate"

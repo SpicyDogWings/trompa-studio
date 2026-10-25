@@ -98,7 +98,12 @@ onMounted(async () => {
 
 <template>
   <div class="flex h-screen flex-col bg-default">
-    <UHeader title="Trompa Studio" to="/" :toggle="false">
+    <UHeader
+      title="Trompa Studio"
+      to="/"
+      :toggle="false"
+      :ui="{ root: 'bg-(--trompa-header-bg)' }"
+    >
       <template #title>
         <span class="flex items-center gap-2">
           <span class="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600">
@@ -291,7 +296,7 @@ onMounted(async () => {
     </div>
 
     <div v-else class="flex min-h-0 flex-1 overflow-hidden">
-      <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main class="flex min-w-0 flex-1 flex-col overflow-hidden bg-(--trompa-content-bg)">
         <div class="flex shrink-0 items-center gap-2 border-b border-default px-3 py-1.5">
           <DataTabStrip
             class="min-w-0 flex-1"
@@ -353,7 +358,7 @@ onMounted(async () => {
       </main>
 
       <SchemaSidebar
-        :class="position === 'left' ? 'order-first border-r' : 'order-last border-l'"
+        :class="position === 'left' ? 'order-first border-r border-(--trompa-sidebar-border)' : 'order-last border-l border-(--trompa-sidebar-border)'"
         :database="connection.database"
         :items="tree"
         :selected="selected"

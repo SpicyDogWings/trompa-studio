@@ -12,6 +12,8 @@ export type SchemaSidebarPosition = 'left' | 'right'
 
 export interface UiPreferences {
   colorMode: ColorModePreference
+  /** Nombre (normalizado a slug) o ruta absoluta a un `.toml`. */
+  theme: string
 }
 
 export interface SchemaPreferences {
@@ -46,7 +48,7 @@ const SSL_MODES: readonly SslMode[] = ['prefer', 'require', 'disable']
 const DEFAULT_PORT = 5432
 
 export const DEFAULT_PREFERENCES: Preferences = {
-  ui: { colorMode: 'system' },
+  ui: { colorMode: 'system', theme: 'trompa' },
   schema: { sidebarPosition: 'right' },
   connection: {
     mode: 'fields',
@@ -76,6 +78,12 @@ function pickOne<T extends string>(value: unknown, allowed: readonly T[], fallba
     : fallback
 }
 
+function pickTheme(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed.length === 0 || trimmed.length > 512 ? fallback : trimmed
+}
+
 function pickPort(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65535
     ? value
@@ -95,7 +103,8 @@ export function normalizePreferences(raw: unknown): Preferences {
 
   return {
     ui: {
-      colorMode: pickOne(ui.colorMode, COLOR_MODES, defaults.ui.colorMode)
+      colorMode: pickOne(ui.colorMode, COLOR_MODES, defaults.ui.colorMode),
+      theme: pickTheme(ui.theme, defaults.ui.theme)
     },
     schema: {
       sidebarPosition: pickOne(

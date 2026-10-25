@@ -1,5 +1,6 @@
 mod db;
 mod preferences;
+mod themes;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,6 +14,7 @@ pub fn run() {
             db::fetch_table_page,
             preferences::read_preferences,
             preferences::write_preferences,
+            themes::list_themes,
             db::start_query,
             db::cancel_query,
         ])

@@ -1,2 +1,14 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+@layer base {
+  :root {
+    /* Defaults de las regiones propias; el tema activo los sobrescribe con
+       una hoja sin capa (`applyThemeStyleElement`). `color-mix` reproduce el
+       `bg-elevated/20` que usaba el sidebar antes de existir los temas. */
+    --trompa-sidebar-bg: color-mix(in oklab, var(--ui-bg-elevated) 20%, transparent);
+    --trompa-sidebar-border: var(--ui-border);
+    --trompa-header-bg: var(--ui-bg);
+    --trompa-content-bg: transparent;
+  }
+}
