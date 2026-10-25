@@ -29,6 +29,19 @@ describe('validateConnection', () => {
     expect(validateConnection('fields', makeFields(), DEFAULT_URL)).toBeNull()
   })
 
+  it.each(['', '0', '-1', '70000', '5432.5', 'abc'])(
+    'rechaza el puerto inválido %j en modo fields',
+    (port) => {
+      expect(validateConnection('fields', makeFields({ port }), DEFAULT_URL)).toBe(
+        'El puerto debe ser un número entre 1 y 65535.'
+      )
+    }
+  )
+
+  it('acepta un puerto válido rodeado de espacios en modo fields', () => {
+    expect(validateConnection('fields', makeFields({ port: ' 5432 ' }), DEFAULT_URL)).toBeNull()
+  })
+
   it('exige una URL no vacía en modo url', () => {
     expect(validateConnection('url', makeFields(), '   ')).toBe('Pega una URL de conexión.')
     expect(validateConnection('url', makeFields(), '')).toBe('Pega una URL de conexión.')
@@ -59,17 +72,22 @@ describe('buildConnectRequest', () => {
       database: 'ventas',
       user: 'ana',
       password: '',
-      sslmode: 'prefer'
+      sslmode: 'prefer',
+      sslrootcert: ''
     })
   })
 
   it('recorta la URL en modo url', () => {
     const request = buildConnectRequest('url', makeFields(), '  postgresql://ana@db:5432/ventas  ')
 
-    expect(request).toEqual({ mode: 'url', url: 'postgresql://ana@db:5432/ventas' })
+    expect(request).toEqual({
+      mode: 'url',
+      url: 'postgresql://ana@db:5432/ventas',
+      sslrootcert: ''
+    })
   })
 
-  it.each(['abc', '', '0'])('usa el puerto 5432 cuando el valor es %j', (port) => {
+  it.each(['abc', '', '0', '-1', '70000'])('usa el puerto 5432 cuando el valor es %j', (port) => {
     const request = buildConnectRequest('fields', makeFields({ port }), DEFAULT_URL)
 
     expect(request.mode).toBe('fields')
@@ -90,6 +108,22 @@ describe('buildConnectRequest', () => {
     )
 
     expect(request).toMatchObject({ password: '  s3creta  ', sslmode: 'require' })
+  })
+
+  it('recorta la ruta de la CA y la transmite en ambos modos', () => {
+    const fieldsRequest = buildConnectRequest(
+      'fields',
+      makeFields({ sslrootcert: '  /etc/ssl/ca.pem  ' }),
+      DEFAULT_URL
+    )
+    expect(fieldsRequest).toMatchObject({ sslrootcert: '/etc/ssl/ca.pem' })
+
+    const urlRequest = buildConnectRequest(
+      'url',
+      makeFields({ sslrootcert: '  /etc/ssl/ca.pem  ' }),
+      DEFAULT_URL
+    )
+    expect(urlRequest).toMatchObject({ sslrootcert: '/etc/ssl/ca.pem' })
   })
 })
 
@@ -131,15 +165,26 @@ describe('preferencesPayload', () => {
       database: 'postgres',
       user: 'ana',
       password: '',
-      sslmode: 'require'
+      sslmode: 'require',
+      sslrootcert: ''
     })
     expect(JSON.stringify(payload)).not.toContain('s3creta')
+  })
+
+  it('conserva la ruta de la CA porque no es un secreto', () => {
+    const payload = preferencesPayload(
+      'fields',
+      makeFields({ sslrootcert: '/etc/ssl/ca.pem' }),
+      DEFAULT_URL
+    )
+
+    expect(payload.sslrootcert).toBe('/etc/ssl/ca.pem')
   })
 
   it('guarda solo mode y url en modo url', () => {
     const payload = preferencesPayload('url', makeFields({ password: 's3creta' }), DEFAULT_URL)
 
-    expect(payload).toEqual({ mode: 'url', url: DEFAULT_URL })
+    expect(payload).toEqual({ mode: 'url', url: DEFAULT_URL, sslrootcert: '' })
   })
 })
 
@@ -151,7 +196,8 @@ describe('parsePreferences', () => {
       port: '6543',
       database: 'ventas',
       user: 'ana',
-      sslmode: 'require'
+      sslmode: 'require',
+      sslrootcert: '/etc/ssl/ca.pem'
     })
 
     expect(parsePreferences(raw)).toEqual({
@@ -163,17 +209,24 @@ describe('parsePreferences', () => {
         database: 'ventas',
         user: 'ana',
         password: '',
-        sslmode: 'require'
+        sslmode: 'require',
+        sslrootcert: '/etc/ssl/ca.pem'
       }
     })
   })
 
-  it('restaura el modo url', () => {
-    const parsed = parsePreferences(JSON.stringify({ mode: 'url', url: 'postgresql://ana@db:5432/ventas' }))
+  it('restaura el modo url y la ruta de la CA', () => {
+    const parsed = parsePreferences(
+      JSON.stringify({
+        mode: 'url',
+        url: 'postgresql://ana@db:5432/ventas',
+        sslrootcert: '/etc/ssl/ca.pem'
+      })
+    )
 
     expect(parsed?.mode).toBe('url')
     expect(parsed?.url).toBe('postgresql://ana@db:5432/ventas')
-    expect(parsed?.fields).toEqual(DEFAULT_FIELDS)
+    expect(parsed?.fields.sslrootcert).toBe('/etc/ssl/ca.pem')
   })
 
   it('ignora una contraseña guardada', () => {

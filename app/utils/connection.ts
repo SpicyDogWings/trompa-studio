@@ -11,6 +11,7 @@ export interface ConnectionFields {
   user: string
   password: string
   sslmode: SslMode
+  sslrootcert: string
 }
 
 export interface ConnectionInfo {
@@ -33,8 +34,9 @@ export type ConnectRequest =
       user: string
       password: string
       sslmode: SslMode
+      sslrootcert: string
     }
-  | { mode: 'url'; url: string }
+  | { mode: 'url'; url: string; sslrootcert: string }
 
 export const DEFAULT_FIELDS: ConnectionFields = {
   host: 'localhost',
@@ -42,7 +44,8 @@ export const DEFAULT_FIELDS: ConnectionFields = {
   database: 'postgres',
   user: 'postgres',
   password: '',
-  sslmode: 'prefer'
+  sslmode: 'prefer',
+  sslrootcert: ''
 }
 
 export const DEFAULT_URL = 'postgresql://postgres@localhost:5432/postgres'
@@ -51,6 +54,17 @@ const SSL_MODES: readonly SslMode[] = ['prefer', 'require', 'disable']
 
 function isSslMode(value: unknown): value is SslMode {
   return typeof value === 'string' && (SSL_MODES as readonly string[]).includes(value)
+}
+
+const PORT_MESSAGE = 'El puerto debe ser un número entre 1 y 65535.'
+const DEFAULT_PORT = 5432
+
+function parsePort(value: string): number | null {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+
+  const port = Number.parseInt(trimmed, 10)
+  return port >= 1 && port <= 65535 ? port : null
 }
 
 export function validateConnection(
@@ -62,6 +76,7 @@ export function validateConnection(
     if (!fields.host.trim() || !fields.database.trim() || !fields.user.trim()) {
       return 'Host, base de datos y usuario son obligatorios.'
     }
+    if (parsePort(fields.port) === null) return PORT_MESSAGE
     return null
   }
 
@@ -75,17 +90,18 @@ export function buildConnectRequest(
   url: string
 ): ConnectRequest {
   if (mode === 'url') {
-    return { mode: 'url', url: url.trim() }
+    return { mode: 'url', url: url.trim(), sslrootcert: fields.sslrootcert.trim() }
   }
 
   return {
     mode: 'fields',
     host: fields.host.trim(),
-    port: Number.parseInt(fields.port, 10) || 5432,
+    port: parsePort(fields.port) ?? DEFAULT_PORT,
     database: fields.database.trim(),
     user: fields.user.trim(),
     password: fields.password,
-    sslmode: fields.sslmode
+    sslmode: fields.sslmode,
+    sslrootcert: fields.sslrootcert.trim()
   }
 }
 
@@ -104,7 +120,7 @@ export function preferencesPayload(
   fields: ConnectionFields,
   url: string
 ): Record<string, unknown> {
-  if (mode === 'url') return { mode: 'url', url }
+  if (mode === 'url') return { mode: 'url', url, sslrootcert: fields.sslrootcert }
 
   return { mode: 'fields', ...fields, password: '' }
 }
@@ -128,7 +144,7 @@ export function parsePreferences(
   const mode: ConnectionMode = data.mode === 'url' ? 'url' : 'fields'
   const url = typeof data.url === 'string' ? data.url : DEFAULT_URL
 
-  for (const key of ['host', 'port', 'database', 'user'] as const) {
+  for (const key of ['host', 'port', 'database', 'user', 'sslrootcert'] as const) {
     const value = data[key]
     if (typeof value === 'string') fields[key] = value
   }
