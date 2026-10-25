@@ -27,11 +27,13 @@ tauri-plugin-log = "2.10.1"
 # PostgreSQL
 deadpool-postgres = "0.14"
 tokio-postgres = "0.7.18"
+futures-util = "0.3"
 
 # TLS con rustls (ring) para no depender de OpenSSL al distribuir
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 tokio-postgres-rustls = { version = "0.14", features = ["ring"] }
 webpki-roots = "1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

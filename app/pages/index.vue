@@ -155,6 +155,20 @@ onMounted(async () => {
             />
           </UFormField>
 
+          <UFormField
+            label="Certificado CA (PEM)"
+            hint="Opcional, para servidores con CA propia"
+          >
+            <UInput
+              v-model="fields.sslrootcert"
+              icon="i-lucide-shield-check"
+              placeholder="/ruta/al/ca.pem"
+              class="w-full font-mono text-sm"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </UFormField>
+
           <UAlert
             v-if="!isDesktop"
             color="warning"
@@ -227,7 +241,7 @@ onMounted(async () => {
       </UCard>
 
       <p class="mt-6 text-center text-xs text-dimmed">
-        Se recuerdan host, puerto, base, usuario y SSL. La contraseña nunca se guarda.
+        Se recuerdan host, puerto, base, usuario, SSL y la ruta de la CA. La contraseña nunca se guarda.
       </p>
     </div>
   </div>

@@ -153,6 +153,7 @@ describe('connect', () => {
     fields.database = 'ventas'
     fields.user = 'ana'
     fields.password = 'secreto-real'
+    fields.sslrootcert = '/etc/ssl/ca.pem'
 
     await connect()
 
@@ -164,7 +165,8 @@ describe('connect', () => {
         port: 6543,
         database: 'ventas',
         user: 'ana',
-        password: 'secreto-real'
+        password: 'secreto-real',
+        sslrootcert: '/etc/ssl/ca.pem'
       })
     })
     expect(connection.value).toEqual(CONNECTED_INFO)
@@ -177,6 +179,7 @@ describe('connect', () => {
     expect(saved.host).toBe('db.example.com')
     expect(saved.password ?? '').toBe('')
     expect(saved.password).not.toBe('secreto-real')
+    expect(saved.sslrootcert).toBe('/etc/ssl/ca.pem')
   })
 
   it('normaliza un error con message y code', async () => {
@@ -274,7 +277,8 @@ describe('restore', () => {
         database: 'ventas',
         user: 'ana',
         password: 'super-secreta',
-        sslmode: 'require'
+        sslmode: 'require',
+        sslrootcert: '/etc/ssl/ca.pem'
       })
     )
 
@@ -288,6 +292,7 @@ describe('restore', () => {
     expect(fields.database).toBe('ventas')
     expect(fields.user).toBe('ana')
     expect(fields.sslmode).toBe('require')
+    expect(fields.sslrootcert).toBe('/etc/ssl/ca.pem')
     expect(fields.password).toBe('')
   })
 })
