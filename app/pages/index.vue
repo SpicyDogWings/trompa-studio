@@ -3,6 +3,8 @@ import { watch } from 'vue'
 import { useConnection } from '~/composables/useConnection'
 import { usePreferences } from '~/composables/usePreferences'
 import { useSchema } from '~/composables/useSchema'
+import { useTableTabs } from '~/composables/useTableTabs'
+import type { SchemaTreeItem } from '~/utils/schema'
 
 useHead({ title: 'Conectar · Trompa Studio' })
 
@@ -49,11 +51,30 @@ const {
   restorePosition
 } = useSchema()
 
+const {
+  tabs,
+  activeTab,
+  open: openTab,
+  close: closeTab,
+  activate: activateTab,
+  goToPage,
+  reload: reloadTable,
+  resetTabs
+} = useTableTabs()
+
+function onSelectLeaf(item: SchemaTreeItem | null) {
+  select(item)
+  if (item) openTab(item)
+}
+
 watch(
   connection,
   (value) => {
     if (value) void loadSchema()
-    else resetSchema()
+    else {
+      resetSchema()
+      resetTabs()
+    }
   },
   { immediate: true }
 )
@@ -76,7 +97,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-default">
+  <div class="flex h-screen flex-col bg-default">
     <UHeader title="Trompa Studio" to="/" :toggle="false">
       <template #title>
         <span class="flex items-center gap-2">
@@ -112,7 +133,7 @@ onMounted(async () => {
         <div class="absolute -bottom-48 right-0 size-[30rem] rounded-full bg-violet-500/10 blur-3xl" />
       </div>
 
-      <div class="relative w-full max-w-xl">
+      <div class="relative max-h-full w-full max-w-xl overflow-y-auto">
         <UCard :ui="{ body: 'p-6 sm:p-8' }">
           <div class="mb-6 grid grid-cols-2 gap-1 rounded-xl bg-elevated p-1">
             <UButton
@@ -270,48 +291,64 @@ onMounted(async () => {
     </div>
 
     <div v-else class="flex min-h-0 flex-1 overflow-hidden">
-      <main class="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
-        <div class="mx-auto max-w-3xl">
-          <UCard :ui="{ body: 'p-6 sm:p-8' }">
-            <div class="flex items-start gap-4">
-              <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-success/10">
-                <UIcon name="i-lucide-database-zap" class="size-6 text-success" />
-              </div>
-              <div class="min-w-0">
-                <h2 class="text-lg font-semibold text-highlighted">Conectado</h2>
-                <p class="truncate font-mono text-sm text-muted" :title="connectionLabel">
-                  {{ connectionLabel }}
-                </p>
-              </div>
-            </div>
+      <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div class="flex shrink-0 items-center gap-2 border-b border-default px-3 py-1.5">
+          <DataTabStrip
+            class="min-w-0 flex-1"
+            :tabs="tabs"
+            :active-id="activeTab?.id ?? null"
+            @select="activateTab"
+            @close="closeTab"
+          />
+          <UButton
+            icon="i-lucide-unplug"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            aria-label="Desconectar"
+            @click="disconnect"
+          />
+        </div>
 
-            <dl class="mt-6 grid grid-cols-1 gap-4 rounded-xl bg-elevated/60 p-4 text-sm sm:grid-cols-3">
-              <div class="min-w-0">
-                <dt class="text-muted">Base</dt>
-                <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.database }}</dd>
+        <div class="min-h-0 flex-1 overflow-auto p-4">
+          <TableDataView
+            v-if="activeTab"
+            :tab="activeTab"
+            @update:page="goToPage"
+            @retry="reloadTable"
+          />
+          <div v-else class="mx-auto max-w-3xl">
+            <UCard :ui="{ body: 'p-6 sm:p-8' }">
+              <div class="flex items-start gap-4">
+                <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-success/10">
+                  <UIcon name="i-lucide-database-zap" class="size-6 text-success" />
+                </div>
+                <div class="min-w-0">
+                  <h2 class="text-lg font-semibold text-highlighted">Conectado</h2>
+                  <p class="truncate font-mono text-sm text-muted" :title="connectionLabel">
+                    {{ connectionLabel }}
+                  </p>
+                </div>
               </div>
-              <div class="min-w-0">
-                <dt class="text-muted">Usuario</dt>
-                <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.user }}</dd>
-              </div>
-              <div class="min-w-0">
-                <dt class="text-muted">Servidor</dt>
-                <dd class="mt-0.5 truncate font-medium text-highlighted" :title="connection.serverVersion">
-                  {{ connection.serverVersion }}
-                </dd>
-              </div>
-            </dl>
 
-            <UButton
-              label="Desconectar"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-unplug"
-              block
-              class="mt-6"
-              @click="disconnect"
-            />
-          </UCard>
+              <dl class="mt-6 grid grid-cols-1 gap-4 rounded-xl bg-elevated/60 p-4 text-sm sm:grid-cols-3">
+                <div class="min-w-0">
+                  <dt class="text-muted">Base</dt>
+                  <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.database }}</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="text-muted">Usuario</dt>
+                  <dd class="mt-0.5 truncate font-medium text-highlighted">{{ connection.user }}</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="text-muted">Servidor</dt>
+                  <dd class="mt-0.5 truncate font-medium text-highlighted" :title="connection.serverVersion">
+                    {{ connection.serverVersion }}
+                  </dd>
+                </div>
+              </dl>
+            </UCard>
+          </div>
         </div>
       </main>
 
@@ -323,7 +360,7 @@ onMounted(async () => {
         :loading="schemaLoading"
         :error="schemaError"
         :position="position"
-        @update:selected="select"
+        @update:selected="onSelectLeaf"
         @update:position="setPosition"
         @retry="loadSchema"
       />
