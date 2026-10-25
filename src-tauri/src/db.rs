@@ -380,6 +380,26 @@ pub struct QueryResult {
     elapsed_ms: u64,
 }
 
+/// Una página de registros de una tabla o vista, con el total de filas.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TablePage {
+    columns: Vec<String>,
+    rows: Vec<Vec<Option<String>>>,
+    total: i64,
+    page: u32,
+    page_size: u32,
+}
+
+/// Identificador SQL citado: `"esquema"."tabla"` con las comillas internas duplicadas.
+fn table_ident(schema: &str, table: &str) -> String {
+    format!(
+        "\"{}\".\"{}\"",
+        schema.replace('"', "\"\""),
+        table.replace('"', "\"\"")
+    )
+}
+
 /// Objeto del catálogo: su OID y su nombre dentro del esquema.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -479,6 +499,50 @@ pub fn disconnect(state: State<'_, DbState>) -> Result<(), DbError> {
     disconnect_with(&state)
 }
 
+/// Resultado de una respuesta simple: columnas de la última descripción,
+/// filas como texto y filas afectadas de la última sentencia que las reporte.
+fn text_result(
+    messages: Vec<SimpleQueryMessage>,
+) -> (Vec<String>, Vec<Vec<Option<String>>>, Option<u64>) {
+    let mut columns = Vec::new();
+    let mut rows = Vec::new();
+    let mut rows_affected = None;
+
+    for message in messages {
+        match message {
+            // Cada sentencia abre su propia descripción: no mezclamos resultados.
+            SimpleQueryMessage::RowDescription(description) => {
+                columns = description
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .collect();
+                rows.clear();
+            }
+            SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
+
+                rows.push(
+                    (0..row.len())
+                        .map(|index| row.get(index).map(str::to_owned))
+                        .collect(),
+                );
+            }
+            SimpleQueryMessage::CommandComplete(count) => {
+                rows_affected = Some(count);
+            }
+            _ => {}
+        }
+    }
+
+    (columns, rows, rows_affected)
+}
+
 /// Lógica de consulta independiente de Tauri.
 pub async fn run_query_with(state: &DbState, sql: &str) -> Result<QueryResult, DbError> {
     let pool = state.pool()?;
@@ -488,53 +552,85 @@ pub async fn run_query_with(state: &DbState, sql: &str) -> Result<QueryResult, D
         .map_err(|error| DbError::from_pool_error("No se pudo obtener una conexión", error))?;
 
     let started = Instant::now();
-    let messages = client.simple_query(sql).await?;
+    let (columns, rows, rows_affected) = text_result(client.simple_query(sql).await?);
 
-    let mut result = QueryResult {
-        columns: Vec::new(),
-        rows: Vec::new(),
-        rows_affected: None,
+    Ok(QueryResult {
+        columns,
+        rows,
+        rows_affected,
+        // La recolección de mensajes también cuenta como tiempo de consulta.
         elapsed_ms: started.elapsed().as_millis() as u64,
-    };
+    })
+}
 
-    for message in messages {
-        match message {
-            // Cada sentencia abre su propia descripción: no mezclamos resultados.
-            SimpleQueryMessage::RowDescription(description) => {
-                result.columns = description
-                    .iter()
-                    .map(|column| column.name().to_string())
-                    .collect();
-                result.rows.clear();
-            }
-            SimpleQueryMessage::Row(row) => {
-                if result.columns.is_empty() {
-                    result.columns = row
-                        .columns()
-                        .iter()
-                        .map(|column| column.name().to_string())
-                        .collect();
-                }
+/// Lógica de página de registros independiente de Tauri.
+pub async fn fetch_table_page_with(
+    state: &DbState,
+    schema: &str,
+    table: &str,
+    page: u32,
+    page_size: u32,
+) -> Result<TablePage, DbError> {
+    let page_size = page_size.clamp(1, 1000);
+    let ident = table_ident(schema, table);
 
-                result.rows.push(
-                    (0..row.len())
-                        .map(|index| row.get(index).map(str::to_owned))
-                        .collect(),
-                );
-            }
-            SimpleQueryMessage::CommandComplete(count) => {
-                result.rows_affected = Some(count);
-            }
-            _ => {}
-        }
-    }
+    let pool = state.pool()?;
+    let client = pool
+        .get()
+        .await
+        .map_err(|error| DbError::from_pool_error("No se pudo obtener una conexión", error))?;
 
-    Ok(result)
+    // El total se pide siempre: el frontend necesita el número de páginas.
+    let (_, rows, _) = text_result(
+        client
+            .simple_query(&format!("SELECT count(*) FROM {ident}"))
+            .await?,
+    );
+    let total = rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(|cell| cell.as_deref())
+        .and_then(|text| text.trim().parse::<i64>().ok())
+        .unwrap_or(0);
+
+    // El recorte se hace aquí para que el frontend nunca pida una página vacía.
+    let pages = (total + page_size as i64 - 1) / page_size as i64;
+    let last = pages.max(1) as u32;
+    let page = page.clamp(1, last);
+    let offset = (page - 1) as i64 * page_size as i64;
+
+    // Sin `ORDER BY`: se respeta el orden que devuelva Postgres.
+    let (columns, rows, _) = text_result(
+        client
+            .simple_query(&format!(
+                "SELECT * FROM {ident} LIMIT {page_size} OFFSET {offset}"
+            ))
+            .await?,
+    );
+
+    Ok(TablePage {
+        columns,
+        rows,
+        total,
+        page,
+        page_size,
+    })
 }
 
 #[tauri::command]
 pub async fn run_query(sql: String, state: State<'_, DbState>) -> Result<QueryResult, DbError> {
     run_query_with(&state, &sql).await
+}
+
+#[tauri::command]
+pub async fn fetch_table_page(
+    schema: String,
+    table: String,
+    page: u32,
+    page_size: u32,
+    state: State<'_, DbState>,
+) -> Result<TablePage, DbError> {
+    fetch_table_page_with(&state, &schema, &table, page, page_size).await
 }
 
 /// Catálogo de esquema independiente de Tauri.
@@ -1870,5 +1966,132 @@ mod tests {
             .find(|function| function.name == "fn_prueba")
             .expect("debía listarse fn_prueba como función");
         assert_eq!(function.signature, "integer");
+    }
+
+    // ------------------------------------------------------------------
+    // Registros paginados.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn cita_identificadores() {
+        assert_eq!(
+            table_ident("pub\"lic", "tab la"),
+            "\"pub\"\"lic\".\"tab la\""
+        );
+    }
+
+    #[tokio::test]
+    async fn integracion_fetch_table_page_pagina_y_total() {
+        let url = test_database_url();
+        let state = connected_state(&url).await;
+        let tabla = format!("trompa_test_paginado_{}", std::process::id());
+
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!(
+                "DROP TABLE IF EXISTS public.{tabla};
+                 CREATE TABLE public.{tabla} (id integer PRIMARY KEY, nombre text);
+                 INSERT INTO public.{tabla} (id, nombre)
+                   SELECT serie.g, 'fila ' || serie.g
+                   FROM generate_series(1, 250) AS serie(g);"
+            ))
+            .await
+            .expect("debía crear la tabla de pruebas");
+        drop(client);
+
+        let primera = fetch_table_page_with(&state, "public", &tabla, 1, 100)
+            .await
+            .expect("la primera página debía cargarse");
+        assert_eq!(primera.total, 250);
+        assert_eq!(primera.page, 1);
+        assert_eq!(primera.page_size, 100);
+        assert_eq!(primera.rows.len(), 100);
+        assert!(
+            primera.columns.contains(&"id".to_string()),
+            "las columnas debían incluir id: {:?}",
+            primera.columns
+        );
+        assert!(
+            primera.columns.contains(&"nombre".to_string()),
+            "las columnas debían incluir nombre: {:?}",
+            primera.columns
+        );
+
+        let tercera = fetch_table_page_with(&state, "public", &tabla, 3, 100)
+            .await
+            .expect("la tercera página debía cargarse");
+        assert_eq!(tercera.page, 3);
+        assert_eq!(tercera.rows.len(), 50);
+
+        // Una página fuera de rango se recorta a la última.
+        let recortada = fetch_table_page_with(&state, "public", &tabla, 9, 100)
+            .await
+            .expect("la página fuera de rango debía recortarse");
+        assert_eq!(recortada.page, 3);
+        assert_eq!(recortada.rows.len(), 50);
+
+        let una_fila = fetch_table_page_with(&state, "public", &tabla, 1, 0)
+            .await
+            .expect("page_size cero debía limitarse");
+        assert_eq!(una_fila.page_size, 1);
+        assert_eq!(una_fila.rows.len(), 1);
+
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!("DROP TABLE IF EXISTS public.{tabla}"))
+            .await
+            .expect("debía limpiar la tabla de pruebas");
+    }
+
+    #[tokio::test]
+    async fn integracion_fetch_table_page_lee_vistas() {
+        let url = test_database_url();
+        let state = connected_state(&url).await;
+        let tabla = format!("trompa_test_paginado_vista_{}", std::process::id());
+        let vista = format!("trompa_test_vista_{}", std::process::id());
+
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!(
+                "DROP VIEW IF EXISTS public.{vista};
+                 DROP TABLE IF EXISTS public.{tabla};
+                 CREATE TABLE public.{tabla} (id integer PRIMARY KEY, nombre text);
+                 INSERT INTO public.{tabla} (id, nombre)
+                   SELECT serie.g, 'fila ' || serie.g
+                   FROM generate_series(1, 250) AS serie(g);
+                 CREATE VIEW public.{vista} AS SELECT id, nombre FROM public.{tabla};"
+            ))
+            .await
+            .expect("debía crear la vista de pruebas");
+        drop(client);
+
+        let pagina = fetch_table_page_with(&state, "public", &vista, 1, 100)
+            .await
+            .expect("la vista debía paginarse");
+        assert_eq!(pagina.total, 250);
+        assert_eq!(pagina.rows.len(), 100);
+        assert_eq!(pagina.columns, vec!["id".to_string(), "nombre".to_string()]);
+
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!(
+                "DROP VIEW IF EXISTS public.{vista};
+                 DROP TABLE IF EXISTS public.{tabla}"
+            ))
+            .await
+            .expect("debía limpiar la vista y la tabla");
+    }
+
+    #[tokio::test]
+    async fn integracion_fetch_table_page_tabla_inexistente_devuelve_error() {
+        let url = test_database_url();
+        let state = connected_state(&url).await;
+        let tabla = format!("trompa_test_inexistente_{}", std::process::id());
+
+        let error = fetch_table_page_with(&state, "public", &tabla, 1, 100)
+            .await
+            .expect_err("la tabla no existe");
+
+        assert_eq!(error.code, Some("42P01".to_string()));
     }
 }
