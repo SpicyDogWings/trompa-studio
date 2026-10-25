@@ -1,8 +1,9 @@
 //! Preferencias de la aplicación persistidas en un TOML.
 //!
-//! El archivo vive en `app_config_dir()` y es propiedad del backend: el
-//! frontend solo pide y envía valores completos por IPC. Las claves del TOML
-//! y del JSON de IPC son las mismas (camelCase), sin capa de conversión.
+//! El archivo vive en `<config_dir>/trompa-studio/` (`~/.config/trompa-studio`
+//! en Linux) y es propiedad del backend: el frontend solo pide y envía valores
+//! completos por IPC. Las claves del TOML y del JSON de IPC son las mismas
+//! (camelCase), sin capa de conversión.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,11 @@ use tauri::Manager;
 
 use crate::db::DbError;
 
-/// Nombre del archivo dentro de `app_config_dir()`.
+/// Nombre del archivo dentro del directorio de configuración.
 const PREFERENCES_FILE: &str = "preferences.toml";
+
+/// Directorio propio dentro de `config_dir()` (`~/.config/trompa-studio` en Linux).
+const CONFIG_DIRECTORY: &str = "trompa-studio";
 
 const COLOR_MODES: [&str; 3] = ["system", "light", "dark"];
 const SIDEBAR_POSITIONS: [&str; 2] = ["left", "right"];
@@ -117,14 +121,18 @@ fn normalize(mut preferences: Preferences) -> Preferences {
     preferences
 }
 
-/// Ruta del archivo de preferencias dentro de `app_config_dir()`.
+/// Ruta del archivo de preferencias: `config_dir()/trompa-studio/preferences.toml`.
+///
+/// No se usa `app_config_dir()` porque deriva del identificador
+/// (`com.nuxtri.app`); el directorio de configuración elegido es
+/// `trompa-studio`.
 pub fn preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, DbError> {
-    let directory = app.path().app_config_dir().map_err(|error| {
+    let directory = app.path().config_dir().map_err(|error| {
         DbError::new(format!(
             "No se pudo resolver el directorio de configuración: {error}"
         ))
     })?;
-    Ok(directory.join(PREFERENCES_FILE))
+    Ok(directory.join(CONFIG_DIRECTORY).join(PREFERENCES_FILE))
 }
 
 /// Lee las preferencias, creando el archivo con los valores por defecto si
