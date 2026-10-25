@@ -75,7 +75,7 @@ export function usePreferences() {
   }
 
   function setColorMode(colorMode: ColorModePreference): Promise<void> {
-    return update({ ui: { colorMode } })
+    return update({ ui: { ...preferences.value.ui, colorMode } })
   }
 
   function setSidebarPosition(sidebarPosition: SchemaSidebarPosition): Promise<void> {

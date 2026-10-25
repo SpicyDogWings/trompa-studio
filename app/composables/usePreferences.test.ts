@@ -7,7 +7,7 @@ const tauri = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => tauri)
 
 const SAVED: Preferences = {
-  ui: { colorMode: 'light' },
+  ui: { colorMode: 'light', theme: 'papel' },
   schema: { sidebarPosition: 'left' },
   connection: {
     mode: 'url',
@@ -23,7 +23,7 @@ const SAVED: Preferences = {
 
 const OTHER: Preferences = {
   ...SAVED,
-  ui: { colorMode: 'dark' }
+  ui: { colorMode: 'dark', theme: 'papel' }
 }
 
 beforeEach(() => {
@@ -79,10 +79,10 @@ describe('update', () => {
     tauri.invoke.mockResolvedValueOnce(OTHER)
     const { preferences, update } = usePreferences()
 
-    await update({ ui: { colorMode: 'light' } })
+    await update({ ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'light' } })
 
     expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
-      preferences: { ...DEFAULT_PREFERENCES, ui: { colorMode: 'light' } }
+      preferences: { ...DEFAULT_PREFERENCES, ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'light' } }
     })
     // La respuesta del backend manda sobre el estado optimista.
     expect(preferences.value).toEqual(OTHER)
@@ -94,15 +94,15 @@ describe('update', () => {
     const { preferences, update } = usePreferences()
 
     await Promise.all([
-      update({ ui: { colorMode: 'light' } }),
-      update({ ui: { colorMode: 'dark' } })
+      update({ ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'light' } }),
+      update({ ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'dark' } })
     ])
 
     expect(tauri.invoke).toHaveBeenNthCalledWith(1, 'write_preferences', {
-      preferences: { ...DEFAULT_PREFERENCES, ui: { colorMode: 'light' } }
+      preferences: { ...DEFAULT_PREFERENCES, ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'light' } }
     })
     expect(tauri.invoke).toHaveBeenNthCalledWith(2, 'write_preferences', {
-      preferences: { ...DEFAULT_PREFERENCES, ui: { colorMode: 'dark' } }
+      preferences: { ...DEFAULT_PREFERENCES, ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'dark' } }
     })
     expect(preferences.value).toEqual(OTHER)
   })
@@ -111,10 +111,13 @@ describe('update', () => {
     tauri.invoke.mockRejectedValueOnce({ message: 'disco lleno' })
     const { preferences, error, update } = usePreferences()
 
-    await update({ ui: { colorMode: 'dark' } })
+    await update({ ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'dark' } })
 
     expect(error.value).toEqual({ message: 'disco lleno' })
-    expect(preferences.value).toEqual({ ...DEFAULT_PREFERENCES, ui: { colorMode: 'dark' } })
+    expect(preferences.value).toEqual({
+      ...DEFAULT_PREFERENCES,
+      ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'dark' }
+    })
   })
 })
 
@@ -126,7 +129,20 @@ describe('setters', () => {
     await setColorMode('light')
 
     expect(tauri.invoke).toHaveBeenCalledWith('write_preferences', {
-      preferences: { ...DEFAULT_PREFERENCES, ui: { colorMode: 'light' } }
+      preferences: { ...DEFAULT_PREFERENCES, ui: { ...DEFAULT_PREFERENCES.ui, colorMode: 'light' } }
+    })
+  })
+
+  it('setColorMode conserva ui.theme', async () => {
+    tauri.invoke.mockResolvedValueOnce(SAVED)
+    const { load, setColorMode } = usePreferences()
+
+    await load()
+    tauri.invoke.mockResolvedValue(OTHER)
+    await setColorMode('dark')
+
+    expect(tauri.invoke).toHaveBeenLastCalledWith('write_preferences', {
+      preferences: { ...SAVED, ui: { colorMode: 'dark', theme: 'papel' } }
     })
   })
 

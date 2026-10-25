@@ -9,7 +9,7 @@ import {
 } from '~/utils/preferences'
 
 const COMPLETE: Preferences = {
-  ui: { colorMode: 'dark' },
+  ui: { colorMode: 'dark', theme: 'papel' },
   schema: { sidebarPosition: 'left' },
   connection: {
     mode: 'url',
@@ -42,6 +42,16 @@ describe('normalizePreferences', () => {
     })
 
     expect(normalized).toEqual(DEFAULT_PREFERENCES)
+  })
+
+  it('normaliza theme: recorta y cae al default si está vacío o es enorme', () => {
+    expect(normalizePreferences({ ui: { theme: '  papel  ' } }).ui.theme).toBe('papel')
+    expect(normalizePreferences({ ui: { theme: '   ' } }).ui.theme).toBe('trompa')
+    expect(normalizePreferences({ ui: { theme: 7 } }).ui.theme).toBe('trompa')
+    expect(normalizePreferences({ ui: { theme: 'x'.repeat(513) } }).ui.theme).toBe('trompa')
+    expect(normalizePreferences({ ui: { theme: '/ruta/a/mi.toml' } }).ui.theme).toBe(
+      '/ruta/a/mi.toml'
+    )
   })
 
   it('rechaza un puerto en forma de string', () => {

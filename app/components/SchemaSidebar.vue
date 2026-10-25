@@ -32,7 +32,7 @@ function togglePosition(): void {
 </script>
 
 <template>
-  <aside class="flex h-full w-80 shrink-0 flex-col bg-elevated/20">
+  <aside class="flex h-full w-80 shrink-0 flex-col bg-(--trompa-sidebar-bg)">
     <header class="flex shrink-0 items-center gap-2 px-3 py-2.5">
       <UIcon name="i-lucide-folder-tree" class="size-4 shrink-0 text-muted" />
       <div class="min-w-0 flex-1">

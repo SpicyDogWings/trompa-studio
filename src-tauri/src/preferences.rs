@@ -28,12 +28,16 @@ const SSL_MODES: [&str; 3] = ["prefer", "require", "disable"];
 #[serde(rename_all = "camelCase", default)]
 pub struct UiPreferences {
     pub color_mode: String,
+    /// Nombre (`id` normalizado a slug) o ruta absoluta a un `.toml`.
+    /// La resolución la hace `themes::load_themes`.
+    pub theme: String,
 }
 
 impl Default for UiPreferences {
     fn default() -> Self {
         Self {
             color_mode: "system".to_owned(),
+            theme: "trompa".to_owned(),
         }
     }
 }
@@ -106,6 +110,12 @@ fn normalize(mut preferences: Preferences) -> Preferences {
     if !COLOR_MODES.contains(&preferences.ui.color_mode.as_str()) {
         preferences.ui.color_mode = UiPreferences::default().color_mode;
     }
+    let theme = preferences.ui.theme.trim();
+    if theme.is_empty() || theme.chars().count() > 512 {
+        preferences.ui.theme = UiPreferences::default().theme;
+    } else {
+        preferences.ui.theme = theme.to_owned();
+    }
     if !SIDEBAR_POSITIONS.contains(&preferences.schema.sidebar_position.as_str()) {
         preferences.schema.sidebar_position = SchemaPreferences::default().sidebar_position;
     }
@@ -121,18 +131,23 @@ fn normalize(mut preferences: Preferences) -> Preferences {
     preferences
 }
 
-/// Ruta del archivo de preferencias: `config_dir()/trompa-studio/preferences.toml`.
+/// Directorio de configuración propio: `<config_dir>/trompa-studio`.
 ///
 /// No se usa `app_config_dir()` porque deriva del identificador
 /// (`com.nuxtri.app`); el directorio de configuración elegido es
 /// `trompa-studio`.
-pub fn preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, DbError> {
+pub(crate) fn config_directory(app: &tauri::AppHandle) -> Result<PathBuf, DbError> {
     let directory = app.path().config_dir().map_err(|error| {
         DbError::new(format!(
             "No se pudo resolver el directorio de configuración: {error}"
         ))
     })?;
-    Ok(directory.join(CONFIG_DIRECTORY).join(PREFERENCES_FILE))
+    Ok(directory.join(CONFIG_DIRECTORY))
+}
+
+/// Ruta del archivo de preferencias: `config_dir()/trompa-studio/preferences.toml`.
+pub fn preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, DbError> {
+    Ok(config_directory(app)?.join(PREFERENCES_FILE))
 }
 
 /// Lee las preferencias, creando el archivo con los valores por defecto si
@@ -268,6 +283,7 @@ mod tests {
         Preferences {
             ui: UiPreferences {
                 color_mode: "dark".to_owned(),
+                theme: "papel".to_owned(),
             },
             schema: SchemaPreferences {
                 sidebar_position: "left".to_owned(),
@@ -330,13 +346,14 @@ mod tests {
         let path = directory.join("preferences.toml");
         fs::write(
             &path,
-            "[ui]\ncolorMode = \"neon\"\n\n[schema]\nsidebarPosition = \"top\"\n\n[connection]\nport = 0\nsslmode = \"quizas\"\n",
+            "[ui]\ncolorMode = \"neon\"\ntheme = \"   \"\n\n[schema]\nsidebarPosition = \"top\"\n\n[connection]\nport = 0\nsslmode = \"quizas\"\n",
         )
         .expect("escribir el archivo");
 
         let preferences = read_preferences_at(&path).expect("leer preferencias");
 
         assert_eq!(preferences.ui.color_mode, "system");
+        assert_eq!(preferences.ui.theme, "trompa");
         assert_eq!(preferences.schema.sidebar_position, "right");
         assert_eq!(preferences.connection.port, 5432);
         assert_eq!(preferences.connection.sslmode, "prefer");

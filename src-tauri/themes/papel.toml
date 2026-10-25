@@ -1,0 +1,92 @@
+name = "Papel"
+description = "Papel cálido con tinta sepia, cómodo con luz ambiente."
+
+[palette]
+primary = "amber"
+secondary = "orange"
+success = "green"
+info = "sky"
+warning = "yellow"
+error = "red"
+neutral = "stone"
+
+[shape]
+radius = "0.375rem"
+
+[light.background]
+default = "#faf7f2"
+muted = "#f3ece1"
+elevated = "#efe5d8"
+accented = "#e4d7c3"
+inverted = "#2b2118"
+
+[light.background.sidebar]
+default = "#f1e9dc"
+border = "#e0d3bf"
+
+[light.background.header]
+default = "#faf7f2"
+
+[light.background.content]
+default = "transparent"
+
+[light.text]
+default = "#3b2f24"
+dimmed = "#8a7a67"
+muted = "#6b5b49"
+toned = "#52443a"
+highlighted = "#1f1710"
+inverted = "#faf7f2"
+
+[light.border]
+default = "#e0d3bf"
+muted = "#e6dccb"
+accented = "#cdbca4"
+inverted = "#3b2f24"
+
+[light.chart]
+1 = "#b45309"
+2 = "#0f766e"
+3 = "#7c3aed"
+4 = "#be123c"
+5 = "#0369a1"
+6 = "#4d7c0f"
+
+[dark.background]
+default = "#201a14"
+muted = "#1a1511"
+elevated = "#2a221b"
+accented = "#3a2f25"
+inverted = "#faf7f2"
+
+[dark.background.sidebar]
+default = "#1c1712"
+border = "#3a2f25"
+
+[dark.background.header]
+default = "#201a14"
+
+[dark.background.content]
+default = "transparent"
+
+[dark.text]
+default = "#e7ddcf"
+dimmed = "#9c8b76"
+muted = "#bcab95"
+toned = "#d3c4b0"
+highlighted = "#faf7f2"
+inverted = "#201a14"
+
+[dark.border]
+default = "#3a2f25"
+muted = "#332a21"
+accented = "#4a3c2f"
+inverted = "#faf7f2"
+
+[dark.chart]
+1 = "#f59e0b"
+2 = "#2dd4bf"
+3 = "#a78bfa"
+4 = "#fb7185"
+5 = "#38bdf8"
+6 = "#a3e635"
