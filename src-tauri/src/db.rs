@@ -3,7 +3,7 @@
 //! Se usa el protocolo simple de `tokio-postgres`: todos los valores llegan
 //! como texto y se admiten varias sentencias en una misma llamada.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::BufReader;
 use std::path::Path;
 use std::str::FromStr;
@@ -380,6 +380,54 @@ pub struct QueryResult {
     elapsed_ms: u64,
 }
 
+/// Objeto del catálogo: su OID y su nombre dentro del esquema.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaObject {
+    oid: i64,
+    name: String,
+}
+
+/// Función del catálogo: el OID identifica la sobrecarga concreta.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaFunction {
+    oid: i64,
+    name: String,
+    signature: String,
+}
+
+/// Todo lo que el sidebar lista de un esquema.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaInfo {
+    name: String,
+    tables: Vec<SchemaObject>,
+    views: Vec<SchemaObject>,
+    functions: Vec<SchemaFunction>,
+    enums: Vec<SchemaObject>,
+}
+
+impl SchemaInfo {
+    fn empty(name: String) -> Self {
+        Self {
+            name,
+            tables: Vec::new(),
+            views: Vec::new(),
+            functions: Vec::new(),
+            enums: Vec::new(),
+        }
+    }
+}
+
+/// Catálogo completo de la base conectada.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaCatalog {
+    database: String,
+    schemas: Vec<SchemaInfo>,
+}
+
 /// Lógica de conexión independiente de Tauri, para poder probarla sin `State`.
 pub async fn connect_with(
     request: ConnectRequest,
@@ -487,6 +535,124 @@ pub async fn run_query_with(state: &DbState, sql: &str) -> Result<QueryResult, D
 #[tauri::command]
 pub async fn run_query(sql: String, state: State<'_, DbState>) -> Result<QueryResult, DbError> {
     run_query_with(&state, &sql).await
+}
+
+/// Catálogo de esquema independiente de Tauri.
+///
+/// Se consultan `pg_class`, `pg_proc` y `pg_type` por separado en vez de unir
+/// las tres: una unión multiplicaría filas y obligaría a deduplicar en Rust.
+/// Cada consulta ya viene ordenada, así que los `Vec` de cada categoría salen
+/// alfabéticos; el `BTreeMap` ordena los esquemas por nombre.
+pub async fn list_schema_with(state: &DbState) -> Result<SchemaCatalog, DbError> {
+    let pool = state.pool()?;
+    let client = pool
+        .get()
+        .await
+        .map_err(|error| DbError::from_pool_error("No se pudo obtener una conexión", error))?;
+
+    let database: String = client
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+
+    let mut schemas: BTreeMap<String, SchemaInfo> = BTreeMap::new();
+
+    let relations = client
+        .query(
+            "SELECT n.nspname, c.relname, c.oid::bigint, c.relkind::text
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r','p','v','m')
+               AND n.nspname <> 'information_schema'
+               AND n.nspname !~ '^pg_'
+             ORDER BY n.nspname, c.relname",
+            &[],
+        )
+        .await?;
+
+    for row in relations {
+        let schema: String = row.get(0);
+        let object = SchemaObject {
+            oid: row.get(2),
+            name: row.get(1),
+        };
+        let entry = schemas
+            .entry(schema.clone())
+            .or_insert_with(|| SchemaInfo::empty(schema));
+
+        match row.get::<_, String>(3).as_str() {
+            "r" | "p" => entry.tables.push(object),
+            _ => entry.views.push(object),
+        }
+    }
+
+    let functions = client
+        .query(
+            "SELECT n.nspname, p.proname, p.oid::bigint,
+                    pg_get_function_identity_arguments(p.oid)
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE p.prokind = 'f'
+               AND n.nspname <> 'information_schema'
+               AND n.nspname !~ '^pg_'
+             ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)",
+            &[],
+        )
+        .await?;
+
+    for row in functions {
+        let schema: String = row.get(0);
+        let function = SchemaFunction {
+            oid: row.get(2),
+            name: row.get(1),
+            signature: row.get(3),
+        };
+        schemas
+            .entry(schema.clone())
+            .or_insert_with(|| SchemaInfo::empty(schema))
+            .functions
+            .push(function);
+    }
+
+    let enums = client
+        .query(
+            "SELECT n.nspname, t.typname, t.oid::bigint
+             FROM pg_type t
+             JOIN pg_namespace n ON n.oid = t.typnamespace
+             WHERE t.typtype = 'e'
+               AND n.nspname <> 'information_schema'
+               AND n.nspname !~ '^pg_'
+             ORDER BY n.nspname, t.typname",
+            &[],
+        )
+        .await?;
+
+    for row in enums {
+        let schema: String = row.get(0);
+        let object = SchemaObject {
+            oid: row.get(2),
+            name: row.get(1),
+        };
+        schemas
+            .entry(schema.clone())
+            .or_insert_with(|| SchemaInfo::empty(schema))
+            .enums
+            .push(object);
+    }
+
+    let mut schemas: Vec<SchemaInfo> = schemas.into_values().collect();
+    schemas.sort_by(|a, b| {
+        (a.name != "public")
+            .cmp(&(b.name != "public"))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    Ok(SchemaCatalog { database, schemas })
+}
+
+#[tauri::command]
+pub async fn list_schema(state: State<'_, DbState>) -> Result<SchemaCatalog, DbError> {
+    list_schema_with(&state).await
 }
 
 /// Lanza una consulta en segundo plano y emite sus resultados incrementalmente.
@@ -1539,5 +1705,170 @@ mod tests {
             })
             .expect("debía emitirse Error tras cancelar");
         assert_eq!(code.as_deref(), Some("57014"));
+    }
+
+    // ------------------------------------------------------------------
+    // Catálogo de esquema.
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn list_schema_sin_pool_devuelve_error() {
+        let state = DbState::default();
+
+        let error = list_schema_with(&state)
+            .await
+            .expect_err("sin conexión el catálogo debía fallar");
+
+        assert_eq!(error.message, "No hay ninguna conexión activa");
+        assert_eq!(error.code, None);
+    }
+
+    #[test]
+    fn serializa_catalogo_en_camel_case() {
+        let catalog = SchemaCatalog {
+            database: "trompa".to_string(),
+            schemas: vec![SchemaInfo {
+                name: "public".to_string(),
+                tables: vec![SchemaObject {
+                    oid: 16384,
+                    name: "clientes".to_string(),
+                }],
+                views: vec![SchemaObject {
+                    oid: 16400,
+                    name: "vista_clientes".to_string(),
+                }],
+                functions: vec![SchemaFunction {
+                    oid: 16500,
+                    name: "fn_total".to_string(),
+                    signature: "integer".to_string(),
+                }],
+                enums: vec![SchemaObject {
+                    oid: 16600,
+                    name: "estado".to_string(),
+                }],
+            }],
+        };
+
+        let value = serde_json::to_value(&catalog).expect("el catálogo debía serializarse");
+
+        assert_eq!(
+            value,
+            json!({
+                "database": "trompa",
+                "schemas": [
+                    {
+                        "name": "public",
+                        "tables": [{ "oid": 16384, "name": "clientes" }],
+                        "views": [{ "oid": 16400, "name": "vista_clientes" }],
+                        "functions": [
+                            { "oid": 16500, "name": "fn_total", "signature": "integer" }
+                        ],
+                        "enums": [{ "oid": 16600, "name": "estado" }]
+                    }
+                ]
+            })
+        );
+    }
+
+    /// Crea un cliente propio para las sentencias de fixture.
+    async fn fixture_client(state: &DbState) -> Object {
+        state
+            .pool()
+            .expect("debía haber un pool activo")
+            .get()
+            .await
+            .expect("debía obtener una conexión para el fixture")
+    }
+
+    #[tokio::test]
+    async fn integracion_list_schema_incluye_tablas_vistas_funciones_y_enums() {
+        let url = test_database_url();
+        let state = connected_state(&url).await;
+
+        let schema = format!("trompa_catalogo_{}", std::process::id());
+        assert!(
+            schema
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+            "el nombre del esquema de pruebas solo debe contener [a-z0-9_]"
+        );
+
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!(
+                "DROP SCHEMA IF EXISTS {schema} CASCADE;
+                 CREATE SCHEMA {schema};
+                 CREATE TABLE {schema}.tabla_prueba (id integer);
+                 CREATE VIEW {schema}.vista_prueba AS SELECT 1::integer AS n;
+                 CREATE TYPE {schema}.estado_prueba AS ENUM ('activo','inactivo');
+                 CREATE FUNCTION {schema}.fn_prueba(integer) RETURNS integer
+                   LANGUAGE sql IMMUTABLE AS 'SELECT $1';"
+            ))
+            .await
+            .expect("debía crear los objetos del esquema de pruebas");
+        drop(client);
+
+        let catalog = list_schema_with(&state)
+            .await
+            .expect("list_schema_with debía funcionar");
+
+        // El catálogo ya está en memoria: limpiar antes de los asserts deja la
+        // base intacta aunque alguno falle.
+        let client = fixture_client(&state).await;
+        client
+            .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            .await
+            .expect("debía limpiar el esquema de pruebas");
+        drop(client);
+
+        assert!(!catalog.database.is_empty(), "database no debe estar vacío");
+
+        for item in &catalog.schemas {
+            assert_ne!(item.name, "information_schema");
+            assert!(
+                !item.name.starts_with("pg_"),
+                "no debe aparecer el esquema del sistema {}",
+                item.name
+            );
+        }
+
+        let first = catalog
+            .schemas
+            .first()
+            .expect("el catálogo debía traer al menos un esquema");
+        assert_eq!(first.name, "public", "public debe ir primero");
+        assert!(
+            first.tables.iter().any(|table| table.name == "clientes"),
+            "public debía contener la tabla sembrada clientes"
+        );
+
+        let found = catalog
+            .schemas
+            .iter()
+            .find(|item| item.name == schema)
+            .expect("el esquema de pruebas debía aparecer en el catálogo");
+
+        assert!(
+            found
+                .tables
+                .iter()
+                .any(|table| table.name == "tabla_prueba"),
+            "debía listarse tabla_prueba como tabla"
+        );
+        assert!(
+            found.views.iter().any(|view| view.name == "vista_prueba"),
+            "debía listarse vista_prueba como vista"
+        );
+        assert!(
+            found.enums.iter().any(|item| item.name == "estado_prueba"),
+            "debía listarse estado_prueba como enum"
+        );
+
+        let function = found
+            .functions
+            .iter()
+            .find(|function| function.name == "fn_prueba")
+            .expect("debía listarse fn_prueba como función");
+        assert_eq!(function.signature, "integer");
     }
 }
