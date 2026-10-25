@@ -35,7 +35,8 @@
     "nixpkgs#harfbuzz.dev",
     "nixpkgs#at-spi2-core.dev",
     "nixpkgs#libayatana-appindicator.dev",
-    "postgresql@latest"
+    "postgresql@latest",
+    "mesa@latest"
   ],
   "env": {
     "RUST_BACKTRACE": "1"
@@ -51,6 +52,9 @@
       ],
       "dev": [
         "pnpm tauri dev"
+      ],
+      "dev:linux": [
+        "export __EGL_VENDOR_LIBRARY_FILENAMES=\"$DEVBOX_PACKAGES_DIR/share/glvnd/egl_vendor.d/50_mesa.json\" && export LIBGL_ALWAYS_SOFTWARE=1 && pnpm tauri dev"
       ],
       "dev:web": [
         "pnpm dev"
