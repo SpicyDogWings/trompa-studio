@@ -8,6 +8,7 @@ pub fn run() {
             db::connect,
             db::disconnect,
             db::run_query,
+            db::list_schema,
             db::start_query,
             db::cancel_query,
         ])
